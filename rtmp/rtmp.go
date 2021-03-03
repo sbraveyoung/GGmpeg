@@ -20,6 +20,13 @@ const (
 	S2_LEN = 1536
 )
 
+const (
+	FMT_0 = iota
+	FMT_1
+	FMT_2
+	FMT_3
+)
+
 type RTMP struct {
 	conn            net.Conn
 	clientVersion   uint8
@@ -30,6 +37,15 @@ type RTMP struct {
 	serverZero      uint32
 	clientRandom    []byte
 	serverRandom    []byte
+
+	fmt  uint8
+	csid uint32
+
+	clientMessageTimeStampDelta    uint32
+	clientMessageExtendedTimeStamp uint32
+	clientMessageLength            uint32
+	clientMessageTypeID            uint8
+	clientMessageStreamID          uint32
 }
 
 func NewRTMP(conn net.Conn) (rtmp *RTMP) {
@@ -46,10 +62,114 @@ func (rtmp *RTMP) Handler() {
 	}
 
 	for {
+		err := rtmp.parseBasicHeader()
+		if err != nil {
+			fmt.Println("parseBasicHeader error:", err)
+			break
+		}
+		rtmp.parseMessageHeader()
+		break
 	}
 }
 
-func (rtmp *RTMP) readChunk() {
+func (rtmp *RTMP) parseMessageHeader() error {
+	switch rtmp.fmt {
+	case FMT_0:
+		b11, err := rtmp.readN(11)
+		if err != nil {
+			return errors.Wrap(err, "read message header from conn")
+		}
+		rtmp.clientMessageTimeStampDelta = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
+		rtmp.clientMessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
+		rtmp.clientMessageTypeID = b11[6]
+		rtmp.clientMessageStreamID = binary.LittleEndian.Uint32(b11[7:])
+	case FMT_1:
+		b7, err := rtmp.readN(7)
+		if err != nil {
+			return errors.Wrap(err, "read message header from conn")
+		}
+		rtmp.clientMessageTimeStampDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
+		rtmp.clientMessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
+		rtmp.clientMessageTypeID = b7[6]
+	case FMT_2:
+		b3, err := rtmp.readN(3)
+		if err != nil {
+			return errors.Wrap(err, "read message header from conn")
+		}
+		rtmp.clientMessageTimeStampDelta = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+	case FMT_3:
+		//do nothing
+	default:
+		//do nothing
+	}
+
+	if rtmp.clientMessageTimeStampDelta == 0xffffff {
+		b, err := rtmp.readN(4)
+		if err != nil {
+			return errors.Wrap(err, "read extended timestamp from conn")
+		}
+		rtmp.clientMessageExtendedTimeStamp = binary.BigEndian.Uint32(b)
+	}
+
+	fmt.Println("message timestamp delta:", rtmp.clientMessageTimeStampDelta)
+	fmt.Println("message length:", rtmp.clientMessageLength)
+	fmt.Println("message type id:", rtmp.clientMessageTypeID)
+	fmt.Println("message stream id:", rtmp.clientMessageStreamID)
+	return nil
+}
+
+func (rtmp *RTMP) readChunk() error {
+	err := rtmp.parseBasicHeader()
+	if err != nil {
+		return errors.Wrap(err, "parse basic header")
+	}
+	//XXX
+	return nil
+}
+
+func (rtmp *RTMP) parseBasicHeader() error {
+	b, err := rtmp.readN(1)
+	if err != nil {
+		return errors.Wrap(err, "read chunk header from conn")
+	}
+	fmt.Printf("basic header:%x\n", b)
+	rtmp.parseFmt(b[0])
+	err = rtmp.parseCsID(b[0])
+	if err != nil {
+		return errors.Wrap(err, "parse csid")
+	}
+	return nil
+}
+
+func (rtmp *RTMP) parseCsID(b byte) error {
+	b &= 0x3f
+	switch b {
+	case 0x0:
+		b1, err := rtmp.readN(1)
+		if err != nil {
+			return errors.Wrap(err, "read basic header fron conn")
+		}
+		rtmp.csid = uint32(uint8(b1[0])) + 64
+	case 0x1:
+		b2, err := rtmp.readN(2)
+		if err != nil {
+			return errors.Wrap(err, "read basic header fron conn")
+		}
+		rtmp.csid = uint32(uint8(b2[0])) + uint32(uint8(b2[1]))*256 + 64
+	case 0x2:
+		//XXX
+	default:
+		rtmp.csid = uint32(uint8(b))
+	}
+	fmt.Println("csid:", rtmp.csid)
+	return nil
+}
+
+func (rtmp *RTMP) parseFmt(b byte) {
+	b &= 0xc0
+	b >>= 6
+	rtmp.fmt = uint8(b)
+	fmt.Println("fmt:", rtmp.fmt)
 }
 
 func (rtmp *RTMP) HandShake() error {
@@ -116,7 +236,7 @@ func (rtmp *RTMP) HandShake() error {
 }
 
 func (rtmp *RTMP) readN(n int) (b []byte, err error) {
-	b = make([]byte, 0, n)
+	b = make([]byte, n)
 	err = rtmp.read(b)
 	return b, err
 }
@@ -127,7 +247,7 @@ func (rtmp *RTMP) read(b []byte) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "rtmp.conn.Read")
 	}
-	if n != cap(b) {
+	if n != len(b) {
 		return errors.New("do not read enough data from conn")
 	}
 	return err
