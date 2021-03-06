@@ -44,7 +44,7 @@ type RTMP struct {
 	clientMessageTimeStampDelta    uint32
 	clientMessageExtendedTimeStamp uint32
 	clientMessageLength            uint32
-	clientMessageTypeID            uint8
+	clientMessageType              uint8
 	clientMessageStreamID          uint32
 }
 
@@ -67,7 +67,11 @@ func (rtmp *RTMP) Handler() {
 			fmt.Println("parseBasicHeader error:", err)
 			break
 		}
-		rtmp.parseMessageHeader()
+		err = rtmp.parseMessageHeader()
+		if err != nil {
+			fmt.Println("parseMessageHeader error:", err)
+			break
+		}
 		break
 	}
 }
@@ -81,7 +85,7 @@ func (rtmp *RTMP) parseMessageHeader() error {
 		}
 		rtmp.clientMessageTimeStampDelta = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
 		rtmp.clientMessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
-		rtmp.clientMessageTypeID = b11[6]
+		rtmp.clientMessageType = b11[6]
 		rtmp.clientMessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT_1:
 		b7, err := rtmp.readN(7)
@@ -90,7 +94,7 @@ func (rtmp *RTMP) parseMessageHeader() error {
 		}
 		rtmp.clientMessageTimeStampDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
 		rtmp.clientMessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
-		rtmp.clientMessageTypeID = b7[6]
+		rtmp.clientMessageType = b7[6]
 	case FMT_2:
 		b3, err := rtmp.readN(3)
 		if err != nil {
@@ -113,7 +117,7 @@ func (rtmp *RTMP) parseMessageHeader() error {
 
 	fmt.Println("message timestamp delta:", rtmp.clientMessageTimeStampDelta)
 	fmt.Println("message length:", rtmp.clientMessageLength)
-	fmt.Println("message type id:", rtmp.clientMessageTypeID)
+	fmt.Println("message type id:", rtmp.clientMessageType)
 	fmt.Println("message stream id:", rtmp.clientMessageStreamID)
 	return nil
 }
