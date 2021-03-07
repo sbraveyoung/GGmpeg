@@ -2,13 +2,25 @@ package rtmp
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/pkg/errors"
+)
+
+const (
+	// HANDSHAKE_MODE
+	SIMPLE = iota
+	COMPLEX
+)
+
+var (
+	handshakeMode = SIMPLE
 )
 
 const (
@@ -20,6 +32,30 @@ const (
 	S2_LEN = 1536
 )
 
+var (
+	FMSKey = []byte{
+		0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20,
+		0x41, 0x64, 0x6f, 0x62, 0x65, 0x20, 0x46, 0x6c,
+		0x61, 0x73, 0x68, 0x20, 0x4d, 0x65, 0x64, 0x69,
+		0x61, 0x20, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
+		0x20, 0x30, 0x30, 0x31, // Genuine Adobe Flash Media Server 001
+		0xf0, 0xee, 0xc2, 0x4a, 0x80, 0x68, 0xbe, 0xe8,
+		0x2e, 0x00, 0xd0, 0xd1, 0x02, 0x9e, 0x7e, 0x57,
+		0x6e, 0xec, 0x5d, 0x2d, 0x29, 0x80, 0x6f, 0xab,
+		0x93, 0xb8, 0xe6, 0x36, 0xcf, 0xeb, 0x31, 0xae,
+	}
+	FPkey = []byte{
+		0x47, 0x65, 0x6E, 0x75, 0x69, 0x6E, 0x65, 0x20,
+		0x41, 0x64, 0x6F, 0x62, 0x65, 0x20, 0x46, 0x6C,
+		0x61, 0x73, 0x68, 0x20, 0x50, 0x6C, 0x61, 0x79,
+		0x65, 0x72, 0x20, 0x30, 0x30, 0x31, // Genuine Adobe Flash Player 001
+		0xF0, 0xEE, 0xC2, 0x4A, 0x80, 0x68, 0xBE, 0xE8,
+		0x2E, 0x00, 0xD0, 0xD1, 0x02, 0x9E, 0x7E, 0x57,
+		0x6E, 0xEC, 0x5D, 0x2D, 0x29, 0x80, 0x6F, 0xAB,
+		0x93, 0xB8, 0xE6, 0x36, 0xCF, 0xEB, 0x31, 0xAE,
+	}
+)
+
 const (
 	FMT_0 = iota
 	FMT_1
@@ -28,15 +64,24 @@ const (
 )
 
 type RTMP struct {
-	conn            net.Conn
+	conn net.Conn
+
+	//simple handshake
 	clientVersion   uint8
 	serverVersion   uint8
 	clientTimeStamp uint32
 	serverTimeStamp uint32
 	clientZero      uint32
 	serverZero      uint32
-	clientRandom    []byte
-	serverRandom    []byte
+
+	clientRandom []byte
+	serverRandom []byte
+
+	//complex handshake
+	clientDigest []byte //32byte
+	serverDigest []byte //32byte
+	clientKey    []byte //128byte
+	serverKey    []byte //128byte
 
 	fmt  uint8
 	csid uint32
@@ -59,8 +104,10 @@ func (rtmp *RTMP) Handler() {
 	err := rtmp.HandShake()
 	if err != nil {
 		fmt.Println("handshake error:", err)
+		return
 	}
 
+	fmt.Println("conning")
 	for {
 		err := rtmp.parseBasicHeader()
 		if err != nil {
@@ -187,7 +234,7 @@ func (rtmp *RTMP) HandShake() error {
 	if err != nil {
 		return errors.Wrap(err, "read c0 from conn")
 	}
-	// fmt.Printf("c0:%x\n", c0)
+	fmt.Printf("c0:%x\n", c0)
 	rtmp.parseC0(c0)
 	if rtmp.clientVersion != rtmp.serverVersion {
 		return errors.New("invalid client version")
@@ -197,45 +244,55 @@ func (rtmp *RTMP) HandShake() error {
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
-	// fmt.Printf("c1:%x\n", c1)
-	rtmp.parseC1(c1)
+	fmt.Printf("c1:%x\n", c1)
 
 	s0 := rtmp.makeS0()
-	// fmt.Printf("s0:%x\n", s0)
-	n, err = rtmp.conn.Write(s0)
-	if err != nil {
-		return errors.Wrap(err, "write s0 to conn")
-	}
-	if n != S0_LEN {
-		return errors.New("write no s0 to conn")
+	fmt.Printf("s0:%x\n", s0)
+
+	if handshakeMode == SIMPLE {
+		rtmp.parseC1(c1)
+
+		n, err = rtmp.conn.Write(s0)
+		if err != nil {
+			return errors.Wrap(err, "write s0 to conn")
+		}
+		if n != S0_LEN {
+			return errors.New("write no s0 to conn")
+		}
+
+		s1 := rtmp.makeS1()
+		fmt.Printf("s1:%x\n", s1)
+		n, err = rtmp.conn.Write(s1)
+		if err != nil {
+			return errors.Wrap(err, "write s1 to conn")
+		}
+		if n != S1_LEN {
+			return errors.New("write no s1 to conn")
+		}
+
+		err = rtmp.read(c2)
+		if err != nil {
+			return errors.Wrap(err, "read c2 from conn")
+		}
+		fmt.Printf("c2:%x\n", c2)
+		rtmp.parseC2(c2)
+
+		s2 := rtmp.makeS2()
+		n, err = rtmp.conn.Write(s2)
+		if err != nil {
+			return errors.Wrap(err, "write s2 to conn")
+		}
+		if n != S2_LEN {
+			return errors.New("write no s2 to conn")
+		}
+		fmt.Printf("s2:%x\n", s2)
+	} else {
+		//complex handshake: https://blog.csdn.net/win_lin/article/details/13006803
+		rtmp.parseC1Complex(c1)
+
+		rtmp.makeS1()
 	}
 
-	s1 := rtmp.makeS1()
-	// fmt.Printf("s1:%x\n", s1)
-	n, err = rtmp.conn.Write(s1)
-	if err != nil {
-		return errors.Wrap(err, "write s1 to conn")
-	}
-	if n != S1_LEN {
-		return errors.New("write no s1 to conn")
-	}
-
-	err = rtmp.read(c2)
-	if err != nil {
-		return errors.Wrap(err, "read c2 from conn")
-	}
-	// fmt.Printf("c2:%x\n", c2)
-	rtmp.parseC2(c2)
-
-	s2 := rtmp.makeS2()
-	n, err = rtmp.conn.Write(s2)
-	if err != nil {
-		return errors.Wrap(err, "write s2 to conn")
-	}
-	if n != S2_LEN {
-		return errors.New("write no s2 to conn")
-	}
-	// fmt.Printf("s2:%x\n", s2)
 	return nil
 }
 
@@ -272,6 +329,27 @@ func (rtmp *RTMP) parseC1(c1 []byte) {
 	}
 }
 
+func (rtmp *RTMP) parseC1Complex(c1 []byte) {
+	if len(c1) == C1_LEN {
+		//digest-key
+		digest := c1[:764]
+		key := c1[764:]
+
+		digestOffset := binary.BigEndian.Uint32(digest[:4])
+		keyOffset := binary.BigEndian.Uint32(key[760:])
+
+		rtmp.clientDigest = digest[4+digestOffset : 4+digestOffset+32]
+		rtmp.clientKey = key[keyOffset : keyOffset+128]
+
+		clientDigestRandomJoined := append(c1[:4+digestOffset], c1[4+digestOffset+32:]...)
+
+		mac := hmac.New(sha256.New, FPKey)
+		mac.Write()
+
+		//TODO:key-digest
+	}
+}
+
 func (rtmp *RTMP) parseC2(c2 []byte) {
 	//TODO
 }
@@ -291,6 +369,9 @@ func (rtmp *RTMP) makeS1() (s1 []byte) {
 	_, _ = b.Write([]byte{0, 0, 0, 0})
 	_, _ = b.Write(rtmp.serverRandom)
 	return b.Bytes()
+}
+
+func (rtmp *RTMP) makeS1Complex() (s1 []byte) {
 }
 
 func (rtmp *RTMP) makeS2() (s2 []byte) {
