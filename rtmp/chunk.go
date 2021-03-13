@@ -21,7 +21,7 @@ type ChunkBasicHeader struct {
 	CsID uint32
 }
 
-func NewChunkBasicHeader(conn *rtmpConn) (cbhp *ChunkBasicHeader, err error) {
+func parseChunkBasicHeader(conn rtmpConn) (cbhp *ChunkBasicHeader, err error) {
 	b, err := conn.readN(1)
 	if err != nil {
 		return nil, errors.Wrap(err, "read chunk header from conn")
@@ -57,12 +57,12 @@ func NewChunkBasicHeader(conn *rtmpConn) (cbhp *ChunkBasicHeader, err error) {
 type ChunkMessageHeader struct {
 	MessageTimeStampDelta    uint32 //3bytes
 	MessageLength            uint32 //3bytes
-	MessageType              uint8
+	MessageType              MessageType
 	MessageStreamID          uint32 //little-endian 4bytes
 	MessageExtendedTimeStamp uint32
 }
 
-func NewChunkMessageHeader(conn *rtmpConn, messageType MessageHeaderType) (cmhp *ChunkMessageHeader, err error) {
+func parseChunkMessageHeader(conn rtmpConn, messageType MessageHeaderType) (cmhp *ChunkMessageHeader, err error) {
 	cmhp = &ChunkMessageHeader{}
 	switch messageType {
 	case FMT0:
@@ -72,7 +72,7 @@ func NewChunkMessageHeader(conn *rtmpConn, messageType MessageHeaderType) (cmhp 
 		}
 		cmhp.MessageTimeStampDelta = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
-		cmhp.MessageType = b11[6]
+		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT1:
 		b7, err := conn.readN(7)
@@ -81,7 +81,7 @@ func NewChunkMessageHeader(conn *rtmpConn, messageType MessageHeaderType) (cmhp 
 		}
 		cmhp.MessageTimeStampDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
-		cmhp.MessageType = b7[6]
+		cmhp.MessageType = MessageType(b7[6])
 	case FMT2:
 		b3, err := conn.readN(3)
 		if err != nil {
@@ -104,12 +104,49 @@ func NewChunkMessageHeader(conn *rtmpConn, messageType MessageHeaderType) (cmhp 
 	return cmhp, nil
 }
 
-type ChunkHeader struct {
+type Chunk struct {
 	ChunkBasicHeader
 	ChunkMessageHeader
+	Payload []byte
 }
 
-type Chunk struct {
-	ChunkHeader
-	Payload []byte
+func ParseChunk(conn rtmpConn) (cp *Chunk, err error) {
+	basicHeader, err := parseChunkBasicHeader(conn)
+	if err != nil {
+		return nil, errors.Wrap(err, "parseChunkBasicHeader")
+	}
+
+	messageHeader, err := parseChunkMessageHeader(conn, basicHeader.Fmt)
+	if err != nil {
+		return nil, errors.Wrap(err, "parseChunkMessageHeader")
+	}
+
+	b := make([]byte, messageHeader.MessageLength)
+	err = conn.read(b)
+	if err != nil {
+		return nil, errors.Wrap(err, "conn.read")
+	}
+	return &Chunk{
+		ChunkBasicHeader:   *basicHeader,
+		ChunkMessageHeader: *messageHeader,
+		Payload:            b,
+	}, nil
+}
+
+func NewChunk(messageType MessageType, payload []byte) (chunk *Chunk) {
+	chunk = &Chunk{
+		ChunkBasicHeader: ChunkBasicHeader{
+			Fmt:  FMT0,
+			CsID: 2,
+		},
+		ChunkMessageHeader: ChunkMessageHeader{
+			MessageTimeStampDelta:    0,
+			MessageLength:            uint32(len(payload)),
+			MessageType:              messageType,
+			MessageStreamID:          0,
+			MessageExtendedTimeStamp: 0,
+		},
+		Payload: payload,
+	}
+	return chunk
 }

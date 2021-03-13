@@ -20,15 +20,8 @@ const (
 )
 
 // type client struct{}
-// func (c *client)Handshake(conn *rtmpConn)(err error){
+// func (c *client)Handshake(conn rtmpConn)(err error){
 // }
-
-type HandshakeMode uint8
-
-const (
-	SIMPLE HandshakeMode = iota
-	COMPLEX
-)
 
 var (
 	FMSKey = []byte{
@@ -71,6 +64,12 @@ type Server struct {
 	serverDigest []byte //32byte
 	clientKey    []byte //128byte
 	serverKey    []byte //128byte
+}
+
+func NewServer() (server *Server) {
+	return &Server{
+		serverVersion: 3,
+	}
 }
 
 func (s *Server) parseC0(c0 []byte) {
@@ -139,67 +138,57 @@ func (s *Server) makeS2() (s2 []byte) {
 // func (rtmp *RTMP) makeS1Complex() (s1 []byte) {
 // }
 
-func (s *Server) Handshake(conn *rtmpConn) (err error) {
+func (s *Server) Handshake(conn rtmpConn) (err error) {
 	c0c1c2 := [C0_LEN + C1_LEN + C2_LEN]byte{}
 	c0 := c0c1c2[:C0_LEN]
 	c1 := c0c1c2[C0_LEN : C0_LEN+C1_LEN]
 	c2 := c0c1c2[C0_LEN+C1_LEN:]
-	var n int
 
 	err = conn.read(c0)
 	if err != nil {
 		return errors.Wrap(err, "read c0 from conn")
 	}
 	fmt.Printf("c0:%x\n", c0)
-	rtmp.parseC0(c0)
-	if rtmp.clientVersion != rtmp.serverVersion {
+	s.parseC0(c0)
+	if s.clientVersion != s.serverVersion {
 		return errors.New("invalid client version")
 	}
 
-	err = rtmp.read(c1)
+	err = conn.read(c1)
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
 	fmt.Printf("c1:%x\n", c1)
 
-	s0 := rtmp.makeS0()
+	s0 := s.makeS0()
 	fmt.Printf("s0:%x\n", s0)
 
-	if handshakeMode == SIMPLE {
-		rtmp.parseC1(c1)
+	if binary.BigEndian.Uint32(c1[4:8]) == 0x0 {
+		s.parseC1(c1)
 
-		n, err = rtmp.conn.Write(s0)
+		err = conn.Write(s0)
 		if err != nil {
 			return errors.Wrap(err, "write s0 to conn")
 		}
-		if n != S0_LEN {
-			return errors.New("write no s0 to conn")
-		}
 
-		s1 := rtmp.makeS1()
+		s1 := s.makeS1()
 		fmt.Printf("s1:%x\n", s1)
-		n, err = rtmp.conn.Write(s1)
+		err = conn.Write(s1)
 		if err != nil {
 			return errors.Wrap(err, "write s1 to conn")
 		}
-		if n != S1_LEN {
-			return errors.New("write no s1 to conn")
-		}
 
-		err = rtmp.read(c2)
+		err = conn.read(c2)
 		if err != nil {
 			return errors.Wrap(err, "read c2 from conn")
 		}
 		fmt.Printf("c2:%x\n", c2)
-		rtmp.parseC2(c2)
+		s.parseC2(c2)
 
-		s2 := rtmp.makeS2()
-		n, err = rtmp.conn.Write(s2)
+		s2 := s.makeS2()
+		err = conn.Write(s2)
 		if err != nil {
 			return errors.Wrap(err, "write s2 to conn")
-		}
-		if n != S2_LEN {
-			return errors.New("write no s2 to conn")
 		}
 		fmt.Printf("s2:%x\n", s2)
 	} else {
@@ -208,6 +197,5 @@ func (s *Server) Handshake(conn *rtmpConn) (err error) {
 
 		// rtmp.makeS1()
 	}
-
 	return nil
 }
