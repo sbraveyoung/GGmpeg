@@ -33,7 +33,7 @@ func (rtmp *RTMP) Handler() {
 			continue
 		}
 
-		if _, ok := rtmp.message[chunk.MessageStreamID]; !ok {
+		if message, ok := rtmp.message[chunk.MessageStreamID]; !ok {
 			message, err := ParseMessage(rtmp, chunk)
 			if err != nil {
 				fmt.Println("NewMessage error:", err)
@@ -41,6 +41,8 @@ func (rtmp *RTMP) Handler() {
 			}
 			fmt.Printf("message:%+v\n", message)
 			message.Do(rtmp.conn)
+		} else {
+			message.Combine(chunk)
 		}
 		break
 	}

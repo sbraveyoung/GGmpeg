@@ -114,9 +114,12 @@ const (
 	CALL                      = "call"
 	CLOSE                     = "close"
 	CREATE_STREAM             = "createStream"
+
+	_RESULT = "_result"
+	_ERROR  = "_error"
 )
 
-type CommandObject struct {
+type ConnectReqCommandObject struct {
 	App            string  `mapstructure:"app"`
 	FlashVer       string  `mapstructure:"flashver"`
 	SwfURL         string  `mapstructure:"swfUrl"`
@@ -132,7 +135,17 @@ type CommandObject struct {
 type CommandMessage struct {
 	CommandName   CommandName
 	TranscationID int
-	CommandObject CommandObject
+	CommandObject ConnectReqCommandObject
+}
+
+type ConnectRespCommandObject struct {
+	FmsVer string
+}
+
+type CommandMessageResponse struct {
+	CommandName   CommandName
+	TranscationID int
+	CommandObject ConnectRespCommandObject
 }
 
 func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err error) {
@@ -181,7 +194,52 @@ func (cm *CommandMessage) Do(conn rtmpConn) error {
 	b = append(b, uint8(chunk.MessageType))
 	b = append(b, 0x0, 0x0, 0x0, 0x0)
 	b = append(b, chunk.Payload...)
-	return conn.Write(b)
+	err := conn.Write(b)
+	if err != nil {
+		return errors.Wrap(err, "conn.Write")
+	}
+
+	chunk = NewChunk(SET_PEER_BANDWIDTH, NewSetPeerBandWidthMessage())
+	b = make([]byte, 0, 11+len(chunk.Payload))
+	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
+	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
+	b = append(b, uint8(chunk.MessageType))
+	b = append(b, 0x0, 0x0, 0x0, 0x0)
+	b = append(b, chunk.Payload...)
+	err = conn.Write(b)
+	if err != nil {
+		return errors.Wrap(err, "conn.Write")
+	}
+
+	chunk = NewChunk(USER_CONTROL_MESSAGE, NewUserControlMessage(StreamBegin))
+	b = make([]byte, 0, 11+len(chunk.Payload))
+	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
+	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
+	b = append(b, uint8(chunk.MessageType))
+	b = append(b, 0x0, 0x0, 0x0, 0x0)
+	b = append(b, chunk.Payload...)
+	err = conn.Write(b)
+	if err != nil {
+		return errors.Wrap(err, "conn.Write")
+	}
+
+	resp := CommandMessageResponse{
+		CommandName:   "_result",
+		TranscationID: 1,
+		CommandObject: ConnectRespCommandObject{
+			FmsVer: "FMS/3,0,1,123",
+		},
+	}
+	buf := bytes.NewBuffer([]byte{})
+	encoder := amf.Encoder{}
+	_, err = encoder.EncodeAmf0(buf, resp)
+	if err != nil {
+		return errors.Wrap(err, " encoder.EncodeAmf0")
+	}
+	chunk = NewChunk()
+	return nil
 }
 
 type WindowAcknowledgeSizeMessage struct {
@@ -194,6 +252,61 @@ func NewWindowAcknowledgeSizeMessage() []byte {
 	}
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, wasm.AcknowledgementWindowSize)
+	return b
+}
+
+type SetPeerBandWidthMessage struct {
+	AcknowledgementWindowSize uint32
+	LimitType                 uint8
+}
+
+func NewSetPeerBandWidthMessage() []byte {
+	spbwm := &SetPeerBandWidthMessage{
+		AcknowledgementWindowSize: 2500000,
+		LimitType:                 0x02,
+	}
+	b := make([]byte, 5)
+	binary.BigEndian.PutUint32(b, spbwm.AcknowledgementWindowSize)
+	b[4] = byte(spbwm.LimitType)
+	return b
+}
+
+type EventType uint16
+
+const (
+	StreamBegin EventType = iota
+	StreamEOF
+	StreamDry
+	SetBufferLength
+	StreamIsRecorded
+	_
+	PingRequest
+	PingResponse
+)
+
+type UserControlMessage struct {
+	EventType EventType
+	EventData []byte
+}
+
+func NewUserControlMessage(eventType EventType) []byte {
+	ucm := &UserControlMessage{
+		EventType: eventType,
+	}
+	var b []byte
+	switch eventType {
+	case StreamBegin:
+		ucm.EventData = make([]byte, 4, 4)
+		b = make([]byte, 4+2)
+		binary.BigEndian.PutUint16(b, uint16(ucm.EventType))
+		copy(b[2:], ucm.EventData)
+	case StreamEOF:
+	case StreamDry:
+	case SetBufferLength:
+	case PingRequest:
+	case PingResponse:
+	default:
+	}
 	return b
 }
 
