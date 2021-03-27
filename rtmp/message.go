@@ -225,20 +225,20 @@ func (cm *CommandMessage) Do(conn rtmpConn) error {
 		return errors.Wrap(err, "conn.Write")
 	}
 
-	resp := CommandMessageResponse{
-		CommandName:   "_result",
-		TranscationID: 1,
-		CommandObject: ConnectRespCommandObject{
-			FmsVer: "FMS/3,0,1,123",
-		},
-	}
-	buf := bytes.NewBuffer([]byte{})
-	encoder := amf.Encoder{}
-	_, err = encoder.EncodeAmf0(buf, resp)
-	if err != nil {
-		return errors.Wrap(err, " encoder.EncodeAmf0")
-	}
-	chunk = NewChunk()
+	// resp := CommandMessageResponse{
+	// CommandName:   "_result",
+	// TranscationID: 1,
+	// CommandObject: ConnectRespCommandObject{
+	// FmsVer: "FMS/3,0,1,123",
+	// },
+	// }
+	// buf := bytes.NewBuffer([]byte{})
+	// encoder := amf.Encoder{}
+	// _, err = encoder.EncodeAmf0(buf, resp)
+	// if err != nil {
+	// return errors.Wrap(err, " encoder.EncodeAmf0")
+	// }
+	// chunk = NewChunk()
 	return nil
 }
 
