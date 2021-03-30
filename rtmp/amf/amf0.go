@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	stdio "io"
+	"reflect"
 	"time"
 
 	"github.com/SmartBrave/utils/io"
@@ -84,7 +85,7 @@ func decode(r io.Reader) (res []interface{}, err error) {
 		case XMLDocumentMarker:
 			i, err = decodeXMLDocument(r)
 		case TypedObjectMarker: //complex types
-			//TODO
+			//XXX: get className, then?
 			var className string
 			className, i, err = decodeTypedObject(r)
 			i = map[string]interface{}{
@@ -209,6 +210,9 @@ func decodeReference(r io.Reader) (index uint16, err error) {
 func decodeEcmaArray(r io.Reader) (res map[string]interface{}, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
+	if err != nil {
+		return res, err
+	}
 
 	var i uint32
 	var p *pair
@@ -268,4 +272,52 @@ func decodeXMLDocument(r io.Reader) (xml []byte, err error) {
 	}
 
 	return readByte(r, int(length))
+}
+
+func (amf0) Encode(w io.Writer, obj interface{}) (err error) {
+	if obj == nil {
+		binary.Write(w, binary.BigEndian, NULLMarker)
+		return
+	}
+
+	v := reflect.ValueOf(obj)
+	if !v.IsValid() {
+		binary.Write(w, binary.BigEndian, UndefinedMarker)
+		return
+	}
+
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		binary.Write(w, binary.BigEndian, NumberMarker)
+		binary.Write(w, binary.BigEndian, float64(v.Int()))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		binary.Write(w, binary.BigEndian, NumberMarker)
+		binary.Write(w, binary.BigEndian, float64(v.Uint()))
+	case reflect.Float32, reflect.Float64:
+		binary.Write(w, binary.BigEndian, NumberMarker)
+		binary.Write(w, binary.BigEndian, v.Float())
+	case reflect.Bool:
+		binary.Write(w, binary.BigEndian, BooleanMarker)
+		binary.Write(w, binary.BigEndian, v.Bool())
+	case reflect.String:
+		str := v.String()
+		if len(str) <= 0xffff {
+			binary.Write(w, binary.BigEndian, StringMarker)
+		} else {
+			binary.Write(w, binary.BigEndian, LongStringMarker)
+		}
+		binary.Write(w, binary.BigEndian, str)
+	case reflect.Map, reflect.Struct: //ObjectMarker, do not support ReferenceMarker
+		// elem := v.Elem()
+		// for i := 0; i < elem.NumField(); i++ {
+		// elem.Type().Field(i)
+		// }
+	case reflect.Ptr, reflect.Interface, reflect.UnsafePointer, reflect.Uintptr:
+	case reflect.Slice, reflect.Array: //EcmaArrayMarker StrictArrayMarker
+	default:
+		//TODO
+		//DateMarker
+		//XMLDocumentMarker
+		//TypedObjectMarker
+	}
 }
