@@ -275,6 +275,10 @@ func decodeXMLDocument(r io.Reader) (xml []byte, err error) {
 }
 
 func (amf0) Encode(w io.Writer, obj interface{}) (err error) {
+	return encode(w, obj)
+}
+
+func encode(w io.Writer, obj interface{}) (err error) {
 	if obj == nil {
 		binary.Write(w, binary.BigEndian, NULLMarker)
 		return
@@ -286,6 +290,7 @@ func (amf0) Encode(w io.Writer, obj interface{}) (err error) {
 		return
 	}
 
+	//NOTE: do not support ReferenceMarker
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		binary.Write(w, binary.BigEndian, NumberMarker)
@@ -303,21 +308,57 @@ func (amf0) Encode(w io.Writer, obj interface{}) (err error) {
 		str := v.String()
 		if len(str) <= 0xffff {
 			binary.Write(w, binary.BigEndian, StringMarker)
+			binary.Write(w, binary.BigEndian, uint16(len(str)))
 		} else {
 			binary.Write(w, binary.BigEndian, LongStringMarker)
+			binary.Write(w, binary.BigEndian, uint32(len(str)))
 		}
 		binary.Write(w, binary.BigEndian, str)
-	case reflect.Map, reflect.Struct: //ObjectMarker, do not support ReferenceMarker
-		// elem := v.Elem()
-		// for i := 0; i < elem.NumField(); i++ {
-		// elem.Type().Field(i)
-		// }
-	case reflect.Ptr, reflect.Interface, reflect.UnsafePointer, reflect.Uintptr:
+	case reflect.Struct:
+		//TypedObjectMarker, time.Time should be encoded with DateMarker, but we treat it as TypedObjectMarker here.
+		binary.Write(w, binary.BigEndian, TypedObjectMarker)
+		err = encode(w, v.Type().Name())
+		if err != nil {
+			return err
+		}
+		for i := 0; i < v.NumField(); i++ {
+			err = encode(w, v.Field(i).Interface())
+			if err != nil {
+				return err
+			}
+		}
+		binary.Write(w, binary.BigEndian, ObjectEndMarker)
+	case reflect.Map: //ObjectMarker
+		binary.Write(w, binary.BigEndian, ObjectMarker)
+		iter := v.MapRange()
+		for iter.Next() {
+			key := iter.Key()
+			if key.Kind() != reflect.String {
+				return errors.New("invalid type")
+			}
+			err = encode(w, key.String())
+			if err != nil {
+				return err
+			}
+			value := iter.Value()
+			err = encode(w, value.Interface())
+			if err != nil {
+				return err
+			}
+		}
+		binary.Write(w, binary.BigEndian, ObjectEndMarker)
+	case reflect.Ptr, reflect.Interface:
+		err = encode(w, v.Elem())
+		if err != nil {
+			return err
+		}
+	case reflect.UnsafePointer: //XXX do not support
+		fallthrough
+	case reflect.Uintptr: //XXX do not support
+		return errors.New("invalid type")
 	case reflect.Slice, reflect.Array: //EcmaArrayMarker StrictArrayMarker
 	default:
 		//TODO
-		//DateMarker
 		//XMLDocumentMarker
-		//TypedObjectMarker
 	}
 }
