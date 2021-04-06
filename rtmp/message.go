@@ -1,14 +1,13 @@
 package rtmp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"reflect"
 
+	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	"github.com/SmartBrave/utils/io"
 	"github.com/goinggo/mapstructure"
-	"github.com/gwuhaolin/livego/protocol/amf"
 	"github.com/pkg/errors"
 )
 
@@ -149,17 +148,25 @@ type CommandMessageResponse struct {
 }
 
 func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err error) {
-	r := bytes.NewBuffer(chunk.Payload)
-	amfDecoder := amf.NewDecoder()
-	v := amf.Version(amf.AMF0)
+	amf := amf_pkg.AMF0
 	if chunk.MessageType == COMMAND_MESSAGE_AMF3 {
-		v = amf.AMF3
+		// amf= amf.AMF3
 	}
+
 	var array []interface{}
-	array, err = amfDecoder.DecodeBatch(r, v)
-	if err != nil && err != io.EOF {
-		return nil, errors.Wrap(err, "amfDecoder.Decode")
+	r := io.NewReader(chunk.Payload)
+	array, err = amf.Decode(r)
+	if err != nil {
+		return nil, errors.Wrap(err, "amf.Decode")
 	}
+
+	//amfDecoder := amf1.NewDecoder()
+	//v := amf1.Version(amf1.AMF0)
+	//array, err = amfDecoder.DecodeBatch(r, v)
+	//if err != nil && err != stdio.EOF {
+	//	return nil, errors.Wrap(err, "amfDecoder.Decode")
+	//}
+
 	if len(array) < 3 {
 		return nil, errors.New("invalid data")
 	}

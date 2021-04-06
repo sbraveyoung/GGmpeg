@@ -17,8 +17,8 @@ const (
 )
 
 type ChunkBasicHeader struct {
-	Fmt  MessageHeaderType //2bits
-	CsID uint32
+	Fmt  MessageHeaderType //2 bits
+	CsID uint32            //6, 14 or 22 bits
 }
 
 func parseChunkBasicHeader(conn rtmpConn) (cbhp *ChunkBasicHeader, err error) {

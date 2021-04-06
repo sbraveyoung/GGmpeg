@@ -3,6 +3,7 @@ package amf
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	stdio "io"
 	"reflect"
 	"time"
@@ -30,6 +31,7 @@ const (
 	RecordSetMarker //reserved, not supported
 	XMLDocumentMarker
 	TypedObjectMarker //complex types
+	InvalidMarker
 )
 
 type amf0 struct{}
@@ -37,92 +39,96 @@ type amf0 struct{}
 var AMF0 amf0
 
 func (amf0) Decode(r io.Reader) (res []interface{}, err error) {
-	return decode(r)
-}
-
-func decode(r io.Reader) (res []interface{}, err error) {
-	var b []byte
 	var referenceIndex []int
+	var i interface{}
+	var marker Marker
 	for {
-		var i interface{}
-		b, err = r.ReadN(1)
+		marker, i, err = decodeAMF0(r)
 		if err == stdio.EOF {
-			return res, nil
+			break
 		}
-		if err != nil {
-			return nil, err
-		}
-
-		switch Marker(b[0]) {
-		case NumberMarker:
-			i, err = decodeNumber(r)
-		case BooleanMarker:
-			i, err = decodeBoolean(r)
-		case StringMarker:
-			i, err = decodeString(r)
-		case ObjectMarker: //complex types
-			i, err = decodeObject(r)
-		case MovieclipMarker: //not supported, do nothing
-		case NULLMarker: //no futher information is encoded, do nothing
-		case UndefinedMarker: //no futher information is encoded, do nothing
-		case ReferenceMarker:
-			var index uint16
-			index, err = decodeReference(r)
-			if int(index) < len(referenceIndex) {
-				i = res[referenceIndex[index]]
-			}
-		case EcmaArrayMarker: //complex types
-			i, err = decodeEcmaArray(r)
-		case ObjectEndMarker: //no futher information is encoded, do nothing
-		case StrictArrayMarker:
-			i, err = decodeStrictArray(r)
-		case DateMarker:
-			i, err = decodeDate(r)
-		case LongStringMarker:
-			i, err = decodeLongString(r)
-		case UnSupportedMarker: //no futher information is encoded, do nothing
-		case RecordSetMarker: //not supported, do nothing
-		case XMLDocumentMarker:
-			i, err = decodeXMLDocument(r)
-		case TypedObjectMarker: //complex types
-			//XXX: get className, then?
-			var className string
-			className, i, err = decodeTypedObject(r)
-			i = map[string]interface{}{
-				className: i,
-			}
-		default:
-			return res, errors.New("invalid amf0 marker")
-		}
-
 		if err != nil {
 			return res, err
 		}
-
 		//NOTE:i should not be set to nil value and typed pointer such as `i=(int*)nil`
 		if i != nil {
-			res = append(res, i)
-			switch Marker(b[0]) {
+			switch marker {
 			case ObjectMarker, EcmaArrayMarker, TypedObjectMarker:
 				referenceIndex = append(referenceIndex, len(res)-1)
+			case ReferenceMarker:
+				index := i.(uint16)
+				if int(index) < len(referenceIndex) {
+					i = res[referenceIndex[index]]
+				}
 			default:
 				//do nothing
 			}
+			res = append(res, i)
 		}
 	}
+	return res, nil
 }
 
-func decodeNumber(r io.Reader) (num float64, err error) {
+func decodeAMF0(r io.Reader) (marker Marker, i interface{}, err error) {
+	var b []byte
+	b, err = r.ReadN(1)
+	if err != nil {
+		return InvalidMarker, nil, err
+	}
+
+	marker = Marker(b[0])
+	switch marker {
+	case NumberMarker:
+		i, err = decodeNumberAMF0(r)
+	case BooleanMarker:
+		i, err = decodeBooleanAMF0(r)
+	case StringMarker:
+		i, err = decodeStringAMF0(r)
+	case ObjectMarker: //complex types
+		i, err = decodeObjectAMF0(r)
+	case MovieclipMarker: //not supported, do nothing
+	case NULLMarker: //no futher information is encoded, do nothing
+	case UndefinedMarker: //no futher information is encoded, do nothing
+	case ReferenceMarker:
+		i, err = decodeReferenceAMF0(r)
+	case EcmaArrayMarker: //complex types
+		i, err = decodeEcmaArrayAMF0(r)
+	case ObjectEndMarker: //no futher information is encoded, do nothing
+	case StrictArrayMarker:
+		i, err = decodeStrictArrayAMF0(r)
+	case DateMarker:
+		i, err = decodeDateAMF0(r)
+	case LongStringMarker:
+		i, err = decodeLongStringAMF0(r)
+	case UnSupportedMarker: //no futher information is encoded, do nothing
+	case RecordSetMarker: //not supported, do nothing
+	case XMLDocumentMarker:
+		i, err = decodeXMLDocumentAMF0(r)
+	case TypedObjectMarker: //complex types
+		//XXX: get className, then?
+		var className string
+		className, i, err = decodeTypedObjectAMF0(r)
+		i = map[string]interface{}{
+			className: i,
+		}
+	default:
+		return InvalidMarker, i, errors.New("invalid amf0 marker")
+	}
+	fmt.Printf("marker:%x, value:%+v\n", marker, i)
+	return marker, i, err
+}
+
+func decodeNumberAMF0(r io.Reader) (num float64, err error) {
 	err = binary.Read(r, binary.BigEndian, &num)
 	return num, err
 }
 
-func decodeBoolean(r io.Reader) (boolean bool, err error) {
+func decodeBooleanAMF0(r io.Reader) (boolean bool, err error) {
 	err = binary.Read(r, binary.BigEndian, &boolean)
 	return boolean, err
 }
 
-func decodeString(r io.Reader) (str string, err error) {
+func decodeStringAMF0(r io.Reader) (str string, err error) {
 	var length uint16
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -130,11 +136,11 @@ func decodeString(r io.Reader) (str string, err error) {
 	}
 
 	var b []byte
-	b, err = readByte(r, int(length))
+	b, err = readByteAMF0(r, int(length))
 	return string(b), err
 }
 
-func decodeLongString(r io.Reader) (str string, err error) {
+func decodeLongStringAMF0(r io.Reader) (str string, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -142,12 +148,12 @@ func decodeLongString(r io.Reader) (str string, err error) {
 	}
 
 	var b []byte
-	b, err = readByte(r, int(length))
+	b, err = readByteAMF0(r, int(length))
 	return string(b), err
 }
 
-//TODO: support utf-8
-func readByte(r io.Reader, length int) (b []byte, err error) {
+//TODO: utf-8 support
+func readByteAMF0(r io.Reader, length int) (b []byte, err error) {
 	b, err = r.ReadN(int(length))
 	if err != nil {
 		return nil, err
@@ -155,10 +161,11 @@ func readByte(r io.Reader, length int) (b []byte, err error) {
 	return b, nil
 }
 
-func decodeObject(r io.Reader) (res map[string]interface{}, err error) {
+func decodeObjectAMF0(r io.Reader) (res map[string]interface{}, err error) {
 	var p *pair
+	res = make(map[string]interface{})
 	for {
-		p, err = readPair(r)
+		p, err = readPairAMF0(r)
 		if err != nil {
 			return res, err
 		}
@@ -170,13 +177,13 @@ func decodeObject(r io.Reader) (res map[string]interface{}, err error) {
 	return res, nil
 }
 
-func decodeTypedObject(r io.Reader) (className string, res map[string]interface{}, err error) {
-	className, err = decodeString(r)
+func decodeTypedObjectAMF0(r io.Reader) (className string, res map[string]interface{}, err error) {
+	className, err = decodeStringAMF0(r)
 	if err != nil {
 		return className, res, err
 	}
 
-	res, err = decodeObject(r)
+	res, err = decodeObjectAMF0(r)
 	return className, res, err
 }
 
@@ -185,9 +192,9 @@ type pair struct {
 	value interface{}
 }
 
-func readPair(r io.Reader) (p *pair, err error) {
+func readPairAMF0(r io.Reader) (p *pair, err error) {
 	p = &pair{}
-	p.key, err = decodeString(r)
+	p.key, err = decodeStringAMF0(r)
 	if err != nil {
 		return p, err
 	}
@@ -195,19 +202,19 @@ func readPair(r io.Reader) (p *pair, err error) {
 		return p, nil
 	}
 
-	p.value, err = decode(r)
+	_, p.value, err = decodeAMF0(r)
 	if err != nil {
 		return p, err
 	}
 	return p, nil
 }
 
-func decodeReference(r io.Reader) (index uint16, err error) {
+func decodeReferenceAMF0(r io.Reader) (index uint16, err error) {
 	err = binary.Read(r, binary.BigEndian, &index)
 	return index, err
 }
 
-func decodeEcmaArray(r io.Reader) (res map[string]interface{}, err error) {
+func decodeEcmaArrayAMF0(r io.Reader) (res map[string]interface{}, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -217,7 +224,7 @@ func decodeEcmaArray(r io.Reader) (res map[string]interface{}, err error) {
 	var i uint32
 	var p *pair
 	for i = 0; i < length; i++ {
-		p, err = readPair(r)
+		p, err = readPairAMF0(r)
 		if err != nil {
 			return res, err
 		}
@@ -229,7 +236,7 @@ func decodeEcmaArray(r io.Reader) (res map[string]interface{}, err error) {
 	return res, nil
 }
 
-func decodeStrictArray(r io.Reader) (res []interface{}, err error) {
+func decodeStrictArrayAMF0(r io.Reader) (res []interface{}, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -239,7 +246,7 @@ func decodeStrictArray(r io.Reader) (res []interface{}, err error) {
 	var i uint32
 	var item interface{}
 	for i = 0; i < length; i++ {
-		item, err = decode(r)
+		_, item, err = decodeAMF0(r)
 		if err != nil {
 			return res, err
 		}
@@ -248,9 +255,9 @@ func decodeStrictArray(r io.Reader) (res []interface{}, err error) {
 	return res, nil
 }
 
-func decodeDate(r io.Reader) (date time.Time, err error) {
+func decodeDateAMF0(r io.Reader) (date time.Time, err error) {
 	var timestamp float64
-	timestamp, err = decodeNumber(r)
+	timestamp, err = decodeNumberAMF0(r)
 	if err != nil {
 		return time.Unix(0, 0), err
 	}
@@ -264,21 +271,21 @@ func decodeDate(r io.Reader) (date time.Time, err error) {
 	return time.Unix(0, int64(timestamp)*1e6), nil
 }
 
-func decodeXMLDocument(r io.Reader) (xml []byte, err error) {
+func decodeXMLDocumentAMF0(r io.Reader) (xml []byte, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
 		return xml, err
 	}
 
-	return readByte(r, int(length))
+	return readByteAMF0(r, int(length))
 }
 
 func (amf0) Encode(w io.Writer, obj interface{}) (err error) {
-	return encode(w, obj)
+	return encodeAMF0(w, obj)
 }
 
-func encode(w io.Writer, obj interface{}) (err error) {
+func encodeAMF0(w io.Writer, obj interface{}) (err error) {
 	if obj == nil {
 		binary.Write(w, binary.BigEndian, NULLMarker)
 		return
@@ -290,7 +297,7 @@ func encode(w io.Writer, obj interface{}) (err error) {
 		return
 	}
 
-	//NOTE: do not support ReferenceMarker
+	//NOTE: not support ReferenceMarker yet
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		binary.Write(w, binary.BigEndian, NumberMarker)
@@ -315,14 +322,14 @@ func encode(w io.Writer, obj interface{}) (err error) {
 		}
 		binary.Write(w, binary.BigEndian, str)
 	case reflect.Struct:
-		//TypedObjectMarker, time.Time should be encoded with DateMarker, but we treat it as TypedObjectMarker here.
+		//TypedObjectMarker, NOTE: time.Time should be encoded with DateMarker, but we treat it as TypedObjectMarker here.
 		binary.Write(w, binary.BigEndian, TypedObjectMarker)
-		err = encode(w, v.Type().Name())
+		err = encodeAMF0(w, v.Type().Name())
 		if err != nil {
 			return err
 		}
 		for i := 0; i < v.NumField(); i++ {
-			err = encode(w, v.Field(i).Interface())
+			err = encodeAMF0(w, v.Field(i).Interface())
 			if err != nil {
 				return err
 			}
@@ -336,29 +343,40 @@ func encode(w io.Writer, obj interface{}) (err error) {
 			if key.Kind() != reflect.String {
 				return errors.New("invalid type")
 			}
-			err = encode(w, key.String())
+			err = encodeAMF0(w, key.String())
 			if err != nil {
 				return err
 			}
 			value := iter.Value()
-			err = encode(w, value.Interface())
+			err = encodeAMF0(w, value.Interface())
 			if err != nil {
 				return err
 			}
 		}
 		binary.Write(w, binary.BigEndian, ObjectEndMarker)
 	case reflect.Ptr, reflect.Interface:
-		err = encode(w, v.Elem())
+		err = encodeAMF0(w, v.Elem())
 		if err != nil {
 			return err
 		}
-	case reflect.UnsafePointer: //XXX do not support
+	case reflect.UnsafePointer: //XXX not support yet
 		fallthrough
-	case reflect.Uintptr: //XXX do not support
+	case reflect.Uintptr: //XXX not support yet
 		return errors.New("invalid type")
-	case reflect.Slice, reflect.Array: //EcmaArrayMarker StrictArrayMarker
+	case reflect.Slice, reflect.Array: //StrictArrayMarker, EcmaArrayMarker is not supported
+		length := v.Len()
+		binary.Write(w, binary.BigEndian, StrictArrayMarker)
+		binary.Write(w, binary.BigEndian, uint32(length))
+		for i := 0; i < length; i++ {
+			err = encodeAMF0(w, v.Index(i))
+			if err != nil {
+				return err
+			}
+		}
+		binary.Write(w, binary.BigEndian, ObjectEndMarker)
 	default:
 		//TODO
 		//XMLDocumentMarker
 	}
+	return nil
 }
