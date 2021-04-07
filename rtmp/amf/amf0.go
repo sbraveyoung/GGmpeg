@@ -3,10 +3,11 @@ package amf
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	stdio "io"
 	"reflect"
 	"time"
+
+	// "fmt"
 
 	"github.com/SmartBrave/utils/io"
 )
@@ -54,7 +55,7 @@ func (amf0) Decode(r io.Reader) (res []interface{}, err error) {
 		if i != nil {
 			switch marker {
 			case ObjectMarker, EcmaArrayMarker, TypedObjectMarker:
-				referenceIndex = append(referenceIndex, len(res)-1)
+				referenceIndex = append(referenceIndex, len(res))
 			case ReferenceMarker:
 				index := i.(uint16)
 				if int(index) < len(referenceIndex) {
@@ -114,7 +115,7 @@ func decodeAMF0(r io.Reader) (marker Marker, i interface{}, err error) {
 	default:
 		return InvalidMarker, i, errors.New("invalid amf0 marker")
 	}
-	fmt.Printf("marker:%x, value:%+v\n", marker, i)
+	// fmt.Printf("marker:%x, value:%+v\n", marker, i)
 	return marker, i, err
 }
 
@@ -198,9 +199,9 @@ func readPairAMF0(r io.Reader) (p *pair, err error) {
 	if err != nil {
 		return p, err
 	}
-	if p.key == "" {
-		return p, nil
-	}
+	// if p.key == "" {
+	// return p, nil
+	// }
 
 	_, p.value, err = decodeAMF0(r)
 	if err != nil {
