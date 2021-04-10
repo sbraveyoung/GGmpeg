@@ -1,0 +1,21 @@
+package rtmp
+
+type VideoCodec float64
+
+const (
+	SUPPORT_VID_UNUSE VideoCodec = 0x0001 << iota
+	SUPPORT_VID_JPEG
+	SUPPORT_VID_SORENSON
+	SUPPORT_VID_HOMEBREW
+	SUPPORT_VID_VP6
+	SUPPORT_VID_VP6ALPHA
+	SUPPORT_VID_HOMEBREWV
+	SUPPORT_VID_H264
+	SUPPORT_VID_ALL = 0x00ff
+)
+
+type VideoFunction float64
+
+const (
+	SUPPORT_VID_CLIENT_SEEK VideoFunction = 1
+)

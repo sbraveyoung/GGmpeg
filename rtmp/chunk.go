@@ -150,3 +150,14 @@ func NewChunk(messageType MessageType, payload []byte) (chunk *Chunk) {
 	}
 	return chunk
 }
+
+func (chunk *Chunk) Send(conn rtmpConn) (err error) {
+	b := make([]byte, 0, 11+len(chunk.Payload))
+	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
+	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
+	b = append(b, uint8(chunk.MessageType))
+	b = append(b, 0x0, 0x0, 0x0, 0x0)
+	b = append(b, chunk.Payload...)
+	return conn.Write(b)
+}

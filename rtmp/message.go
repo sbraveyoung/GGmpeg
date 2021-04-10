@@ -1,17 +1,17 @@
 package rtmp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
-
-	// stdio "io"
+	"io"
 	"reflect"
-
-	"github.com/goinggo/mapstructure"
 
 	// amf1 "github.com/gwuhaolin/livego/protocol/amf"
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
-	"github.com/SmartBrave/utils/io"
+	"github.com/SmartBrave/utils/easyio"
+	"github.com/fatih/structs"
+	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"
 )
 
@@ -123,17 +123,17 @@ const (
 )
 
 type ConnectReqCommandObject struct {
-	App            string  `mapstructure:"app"`
-	FlashVer       string  `mapstructure:"flashver"`
-	SwfURL         string  `mapstructure:"swfUrl"`
-	TcURL          string  `mapstructure:"tcUrl"`
-	Fpad           bool    `mapstructure:"fpad"`
-	AudioCodecs    float64 `mapstructure:"audioCodecs"`
-	VideoCodecs    float64 `mapstructure:"videoCodecs"`
-	VideoFunction  float64 `mapstructure:"videoFunction"`
-	PageURL        string  `mapstructure:"pageUrl"`
-	ObjectEncoding float64 `mapstructure:"objectEncoding"`
-	Type           string  `mapstructure:"type"`
+	App            string        `mapstructure:"app"`
+	FlashVer       string        `mapstructure:"flashver"`
+	SwfURL         string        `mapstructure:"swfUrl"`
+	TcURL          string        `mapstructure:"tcUrl"`
+	Fpad           bool          `mapstructure:"fpad"`
+	AudioCodecs    AudioCodec    `mapstructure:"audioCodecs"`
+	VideoCodecs    VideoCodec    `mapstructure:"videoCodecs"`
+	VideoFunction  VideoFunction `mapstructure:"videoFunction"`
+	PageURL        string        `mapstructure:"pageUrl"`
+	ObjectEncoding float64       `mapstructure:"objectEncoding"`
+	Type           string        `mapstructure:"type"`
 }
 
 type CommandMessage struct {
@@ -143,7 +143,11 @@ type CommandMessage struct {
 }
 
 type ConnectRespCommandObject struct {
-	FmsVer string
+	FmsVer         string
+	Level          string
+	Code           string
+	Description    string
+	ObjectEncoding float64
 }
 
 type CommandMessageResponse struct {
@@ -154,11 +158,11 @@ type CommandMessageResponse struct {
 
 func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err error) {
 	var array []interface{}
-	r := io.NewReader(chunk.Payload)
+	r := easyio.NewReader(bytes.NewReader(chunk.Payload))
 
-	amf := amf_pkg.AMF0
+	amf := amf_pkg.AMF0{}
 	if chunk.MessageType == COMMAND_MESSAGE_AMF3 {
-		// amf= amf.AMF3
+		// amf= amf_pkg.AMF3{}
 	}
 	array, err = amf.Decode(r)
 	if err != nil {
@@ -189,7 +193,6 @@ func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err erro
 	if err != nil {
 		return nil, errors.Wrap(err, "mapstructure.Decode")
 	}
-	fmt.Printf("command message struct:%+v\n", *cm)
 	return cm, nil
 }
 
@@ -198,59 +201,68 @@ func (cm *CommandMessage) Combine(chunk *Chunk) error {
 }
 
 func (cm *CommandMessage) Do(conn rtmpConn) error {
-	chunk := NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, NewWindowAcknowledgeSizeMessage())
-	b := make([]byte, 0, 11+len(chunk.Payload))
-	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
-	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
-	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
-	b = append(b, uint8(chunk.MessageType))
-	b = append(b, 0x0, 0x0, 0x0, 0x0)
-	b = append(b, chunk.Payload...)
-	err := conn.Write(b)
-	if err != nil {
-		return errors.Wrap(err, "conn.Write")
+	var resp *CommandMessageResponse
+	switch cm.CommandName {
+	case CONNECT:
+		fmt.Println("111")
+		chunk := NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, NewWindowAcknowledgeSizeMessage(2500000))
+		err := chunk.Send(conn)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("222")
+		chunk = NewChunk(SET_PEER_BANDWIDTH, NewSetPeerBandWidthMessage(2500000, 0x02))
+		err = chunk.Send(conn)
+		if err != nil {
+			return err
+		}
+
+		// fmt.Println("333")
+		// _, err = ParseChunk(conn) //ignore temporary
+		// if err != nil {
+		// return err
+		// }
+
+		fmt.Println("444")
+		chunk = NewChunk(USER_CONTROL_MESSAGE, NewUserControlMessage(StreamBegin))
+		err = chunk.Send(conn)
+		if err != nil {
+			return err
+		}
+		resp = &CommandMessageResponse{
+			CommandName:   _RESULT,
+			TranscationID: 1,
+			CommandObject: ConnectRespCommandObject{
+				FmsVer: "FMS/3,0,1,123",
+			},
+		}
+	case CALL:
+	case CLOSE:
+	case CREATE_STREAM:
+	default:
 	}
 
-	chunk = NewChunk(SET_PEER_BANDWIDTH, NewSetPeerBandWidthMessage())
-	b = make([]byte, 0, 11+len(chunk.Payload))
-	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
-	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
-	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
-	b = append(b, uint8(chunk.MessageType))
-	b = append(b, 0x0, 0x0, 0x0, 0x0)
-	b = append(b, chunk.Payload...)
-	err = conn.Write(b)
-	if err != nil {
-		return errors.Wrap(err, "conn.Write")
-	}
-
-	chunk = NewChunk(USER_CONTROL_MESSAGE, NewUserControlMessage(StreamBegin))
-	b = make([]byte, 0, 11+len(chunk.Payload))
-	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
-	b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
-	b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
-	b = append(b, uint8(chunk.MessageType))
-	b = append(b, 0x0, 0x0, 0x0, 0x0)
-	b = append(b, chunk.Payload...)
-	err = conn.Write(b)
-	if err != nil {
-		return errors.Wrap(err, "conn.Write")
-	}
-
-	// resp := CommandMessageResponse{
-	// CommandName:   "_result",
-	// TranscationID: 1,
-	// CommandObject: ConnectRespCommandObject{
-	// FmsVer: "FMS/3,0,1,123",
-	// },
-	// }
-	// buf := bytes.NewBuffer([]byte{})
+	buf := bytes.NewBuffer([]byte{})
 	// encoder := amf.Encoder{}
 	// _, err = encoder.EncodeAmf0(buf, resp)
 	// if err != nil {
 	// return errors.Wrap(err, " encoder.EncodeAmf0")
 	// }
-	// chunk = NewChunk()
+	amf := amf_pkg.AMF0{}
+	writer := easyio.NewWriter(buf)
+	err := amf.Encode(writer, structs.Map(resp))
+	if err != nil {
+		fmt.Println("err:", err)
+		return err
+	}
+
+	b, err := io.ReadAll(buf)
+	if err != nil {
+		fmt.Println("err:", err)
+		return err
+	}
+	fmt.Printf("resp data:%x", b)
 	return nil
 }
 
@@ -258,9 +270,9 @@ type WindowAcknowledgeSizeMessage struct {
 	AcknowledgementWindowSize uint32
 }
 
-func NewWindowAcknowledgeSizeMessage() []byte {
+func NewWindowAcknowledgeSizeMessage(windowSize uint32) []byte {
 	wasm := &WindowAcknowledgeSizeMessage{
-		AcknowledgementWindowSize: 2500000,
+		AcknowledgementWindowSize: windowSize,
 	}
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, wasm.AcknowledgementWindowSize)
@@ -272,10 +284,10 @@ type SetPeerBandWidthMessage struct {
 	LimitType                 uint8
 }
 
-func NewSetPeerBandWidthMessage() []byte {
+func NewSetPeerBandWidthMessage(windowSize uint32, limitType uint8) []byte {
 	spbwm := &SetPeerBandWidthMessage{
-		AcknowledgementWindowSize: 2500000,
-		LimitType:                 0x02,
+		AcknowledgementWindowSize: windowSize,
+		LimitType:                 limitType,
 	}
 	b := make([]byte, 5)
 	binary.BigEndian.PutUint32(b, spbwm.AcknowledgementWindowSize)
