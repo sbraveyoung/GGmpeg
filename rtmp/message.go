@@ -7,11 +7,11 @@ import (
 	// stdio "io"
 	"reflect"
 
-	"github.com/SmartBrave/utils/io"
 	"github.com/goinggo/mapstructure"
 
 	// amf1 "github.com/gwuhaolin/livego/protocol/amf"
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	"github.com/SmartBrave/utils/io"
 	"github.com/pkg/errors"
 )
 
@@ -133,6 +133,7 @@ type ConnectReqCommandObject struct {
 	VideoFunction  float64 `mapstructure:"videoFunction"`
 	PageURL        string  `mapstructure:"pageUrl"`
 	ObjectEncoding float64 `mapstructure:"objectEncoding"`
+	Type           string  `mapstructure:"type"`
 }
 
 type CommandMessage struct {
