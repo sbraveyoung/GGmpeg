@@ -1,0 +1,10 @@
+github.com/SmartBrave/utils/easyerrors v0.0.0-20210412084923-be09977db1ed h1:6zZ05qATQaX7jbhkqKOfHq0BGDdkpV/zeSNfyvQX7Nc=
+github.com/SmartBrave/utils/easyerrors v0.0.0-20210412084923-be09977db1ed/go.mod h1:fEo2MFWMpGbHwxgtMtjkJ0eMfjlBbm5dwx5yr9VPwwM=
+github.com/SmartBrave/utils/easyio v0.0.0-20210412035806-8ac56b9d24cd h1:bWYrXjlnJZ35EHd2k/6rExa4tt/u5BDuHlga+ReTidY=
+github.com/SmartBrave/utils/easyio v0.0.0-20210412035806-8ac56b9d24cd/go.mod h1:Co1AgfzGX7qnzuWeS1lzmskRcjPjhwpgXOhG+tf6LIo=
+github.com/fatih/structs v1.1.0 h1:Q7juDM0QtcnhCpeyLGQKyg4TOIghuNXrkL32pHAUMxo=
+github.com/fatih/structs v1.1.0/go.mod h1:9NiDSp5zOcgEDl+j00MP/WkGVPOlPRLejGD8Ga6PJ7M=
+github.com/goinggo/mapstructure v0.0.0-20140717182941-194205d9b4a9 h1:wqckanyE9qc/XnvnybC6SHOb8Nyd62QXAZOzA8twFig=
+github.com/goinggo/mapstructure v0.0.0-20140717182941-194205d9b4a9/go.mod h1:64ikIrMv84B+raz7akXOqbF7cK3/OQQ/6cClY10oy7A=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

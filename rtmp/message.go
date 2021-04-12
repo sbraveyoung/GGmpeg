@@ -9,6 +9,7 @@ import (
 
 	// amf1 "github.com/gwuhaolin/livego/protocol/amf"
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/SmartBrave/utils/easyio"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
@@ -110,13 +111,11 @@ func ParseMessage(rtmp *RTMP, chunk *Chunk) (message Message, err error) {
 	return nil, errors.New("invalue message type")
 }
 
-type CommandName string
-
 const (
-	CONNECT       CommandName = "connect"
-	CALL                      = "call"
-	CLOSE                     = "close"
-	CREATE_STREAM             = "createStream"
+	CONNECT       = "connect"
+	CALL          = "call"
+	CLOSE         = "close"
+	CREATE_STREAM = "createStream"
 
 	_RESULT = "_result"
 	_ERROR  = "_error"
@@ -137,30 +136,60 @@ type ConnectReqCommandObject struct {
 }
 
 type CommandMessage struct {
-	CommandName   CommandName
+	CommandName   string
 	TranscationID int
 	CommandObject ConnectReqCommandObject
 }
 
 type ConnectRespCommandObject struct {
-	FmsVer         string
-	Level          string
-	Code           string
-	Description    string
-	ObjectEncoding float64
+	FmsVer         string  `structs:"fmsVer,omitempty"`
+	Level          string  `structs:"level,omitempty"`
+	Code           string  `structs:"code,omitempty"`
+	Description    string  `structs:"description,omitempty"`
+	ObjectEncoding float64 `structs:"object_encoding,omitempty"`
 }
 
 type CommandMessageResponse struct {
-	CommandName   CommandName
+	CommandName   string
 	TranscationID int
 	CommandObject ConnectRespCommandObject
+}
+
+func NewCommandMessage(commandName string) (b []byte) {
+	resp := &CommandMessageResponse{
+		CommandName:   commandName,
+		TranscationID: 1,
+		CommandObject: ConnectRespCommandObject{
+			FmsVer: "FMS/3,0,1,123",
+		},
+	}
+	buf := bytes.NewBuffer([]byte{})
+	writer := easyio.NewWriter(buf)
+	amf := amf_pkg.AMF0{}
+
+	err1 := amf.Encode(writer, resp.CommandName)
+	err2 := amf.Encode(writer, resp.TranscationID)
+	err3 := amf.Encode(writer, structs.Map(resp.CommandObject))
+	err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
+	if err != nil {
+		fmt.Println("err:", err)
+		return buf.Bytes()
+	}
+
+	b, err = io.ReadAll(buf)
+	if err != nil {
+		return buf.Bytes()
+	}
+	// fmt.Printf("resp data:%x", b)
+	return b
 }
 
 func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err error) {
 	var array []interface{}
 	r := easyio.NewReader(bytes.NewReader(chunk.Payload))
 
-	amf := amf_pkg.AMF0{}
+	var amf amf_pkg.AMF
+	amf = amf_pkg.AMF0{}
 	if chunk.MessageType == COMMAND_MESSAGE_AMF3 {
 		// amf= amf_pkg.AMF3{}
 	}
@@ -183,7 +212,7 @@ func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err erro
 		fmt.Println("index:", index, " a.type:", reflect.TypeOf(a), " a.Value:", reflect.ValueOf(a))
 	}
 	cm = &CommandMessage{
-		CommandName:   CommandName(array[0].(string)),
+		CommandName:   array[0].(string),
 		TranscationID: int(array[1].(float64)),
 	}
 	if cm.TranscationID != 1 {
@@ -200,23 +229,14 @@ func (cm *CommandMessage) Combine(chunk *Chunk) error {
 	return nil
 }
 
-func (cm *CommandMessage) Do(conn rtmpConn) error {
-	var resp *CommandMessageResponse
+func (cm *CommandMessage) Do(conn rtmpConn) (err error) {
 	switch cm.CommandName {
 	case CONNECT:
-		fmt.Println("111")
 		chunk := NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, NewWindowAcknowledgeSizeMessage(2500000))
-		err := chunk.Send(conn)
-		if err != nil {
-			return err
-		}
+		err1 := chunk.Send(conn)
 
-		fmt.Println("222")
 		chunk = NewChunk(SET_PEER_BANDWIDTH, NewSetPeerBandWidthMessage(2500000, 0x02))
-		err = chunk.Send(conn)
-		if err != nil {
-			return err
-		}
+		err2 := chunk.Send(conn)
 
 		// fmt.Println("333")
 		// _, err = ParseChunk(conn) //ignore temporary
@@ -224,45 +244,18 @@ func (cm *CommandMessage) Do(conn rtmpConn) error {
 		// return err
 		// }
 
-		fmt.Println("444")
 		chunk = NewChunk(USER_CONTROL_MESSAGE, NewUserControlMessage(StreamBegin))
-		err = chunk.Send(conn)
-		if err != nil {
-			return err
-		}
-		resp = &CommandMessageResponse{
-			CommandName:   _RESULT,
-			TranscationID: 1,
-			CommandObject: ConnectRespCommandObject{
-				FmsVer: "FMS/3,0,1,123",
-			},
-		}
+		err3 := chunk.Send(conn)
+
+		chunk = NewChunk(COMMAND_MESSAGE_AMF0, NewCommandMessage(_RESULT))
+		err4 := chunk.Send(conn)
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	case CALL:
 	case CLOSE:
 	case CREATE_STREAM:
 	default:
 	}
 
-	buf := bytes.NewBuffer([]byte{})
-	// encoder := amf.Encoder{}
-	// _, err = encoder.EncodeAmf0(buf, resp)
-	// if err != nil {
-	// return errors.Wrap(err, " encoder.EncodeAmf0")
-	// }
-	amf := amf_pkg.AMF0{}
-	writer := easyio.NewWriter(buf)
-	err := amf.Encode(writer, structs.Map(resp))
-	if err != nil {
-		fmt.Println("err:", err)
-		return err
-	}
-
-	b, err := io.ReadAll(buf)
-	if err != nil {
-		fmt.Println("err:", err)
-		return err
-	}
-	fmt.Printf("resp data:%x", b)
 	return nil
 }
 

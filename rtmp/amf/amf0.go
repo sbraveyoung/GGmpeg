@@ -10,6 +10,7 @@ import (
 
 	// "fmt"
 
+	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/SmartBrave/utils/easyio"
 )
 
@@ -282,10 +283,10 @@ func decodeXMLDocumentAMF0(r easyio.Reader) (xml []byte, err error) {
 }
 
 func (AMF0) Encode(w easyio.Writer, obj interface{}) (err error) {
-	return encodeAMF0(w, obj)
+	return encodeAMF0(w, obj, true)
 }
 
-func encodeAMF0(w easyio.Writer, obj interface{}) (err error) {
+func encodeAMF0(w easyio.Writer, obj interface{}, encodeMarker bool) (err error) {
 	if obj == nil {
 		binary.Write(w, binary.BigEndian, NULLMarker)
 		return
@@ -301,62 +302,35 @@ func encodeAMF0(w easyio.Writer, obj interface{}) (err error) {
 	//NOTE: not support ReferenceMarker yet
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		binary.Write(w, binary.BigEndian, NumberMarker)
-		binary.Write(w, binary.BigEndian, float64(v.Int()))
+		err = encodeNumberAMF0(w, float64(v.Int()), encodeMarker)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		binary.Write(w, binary.BigEndian, NumberMarker)
-		binary.Write(w, binary.BigEndian, float64(v.Uint()))
+		err = encodeNumberAMF0(w, float64(v.Uint()), encodeMarker)
 	case reflect.Float32, reflect.Float64:
-		binary.Write(w, binary.BigEndian, NumberMarker)
-		binary.Write(w, binary.BigEndian, v.Float())
+		err = encodeNumberAMF0(w, v.Float(), encodeMarker)
 	case reflect.Bool:
-		binary.Write(w, binary.BigEndian, BooleanMarker)
-		binary.Write(w, binary.BigEndian, v.Bool())
+		err = encodeBooleanAMF0(w, v.Bool(), encodeMarker)
 	case reflect.String:
-		str := v.String()
-		if len(str) <= 0xffff {
-			binary.Write(w, binary.BigEndian, StringMarker)
-			binary.Write(w, binary.BigEndian, uint16(len(str)))
-		} else {
-			binary.Write(w, binary.BigEndian, LongStringMarker)
-			binary.Write(w, binary.BigEndian, uint32(len(str)))
-		}
-		binary.Write(w, binary.BigEndian, str)
-	case reflect.Struct:
-		//TypedObjectMarker, NOTE: time.Time should be encoded with DateMarker, but we treat it as TypedObjectMarker here.
-		binary.Write(w, binary.BigEndian, TypedObjectMarker)
-		err = encodeAMF0(w, v.Type().Name())
-		if err != nil {
-			return err
-		}
-		for i := 0; i < v.NumField(); i++ {
-			err = encodeAMF0(w, v.Field(i))
-			if err != nil {
-				return err
-			}
-		}
-		binary.Write(w, binary.BigEndian, ObjectEndMarker)
+		err = encodeStringAMF0(w, v.String(), encodeMarker)
+	case reflect.Struct: //TODO: has some problem
+	//TODO: XMLDocumentMarker
+	//TODO: DateMarker
+	//TypedObjectMarker
+	// binary.Write(w, binary.BigEndian, TypedObjectMarker)
+	// err = encodeAMF0(w, v.Type().Name())
+	// if err != nil {
+	// return err
+	// }
+	// for i := 0; i < v.NumField(); i++ {
+	// err = encodeAMF0(w, v.Field(i))
+	// if err != nil {
+	// return err
+	// }
+	// }
+	// binary.Write(w, binary.BigEndian, ObjectEndMarker)
 	case reflect.Map: //ObjectMarker
-		binary.Write(w, binary.BigEndian, ObjectMarker)
-		iter := v.MapRange()
-		for iter.Next() {
-			key := iter.Key()
-			if key.Kind() != reflect.String {
-				return errors.New("invalid type")
-			}
-			err = encodeAMF0(w, key.String())
-			if err != nil {
-				return err
-			}
-			value := iter.Value()
-			err = encodeAMF0(w, value.Interface())
-			if err != nil {
-				return err
-			}
-		}
-		binary.Write(w, binary.BigEndian, ObjectEndMarker)
+		err = encodeObjectAMF0(w, v, encodeMarker)
 	case reflect.Ptr, reflect.Interface:
-		err = encodeAMF0(w, v.Elem())
+		err = encodeAMF0(w, v.Elem(), encodeMarker)
 		if err != nil {
 			return err
 		}
@@ -365,19 +339,80 @@ func encodeAMF0(w easyio.Writer, obj interface{}) (err error) {
 	case reflect.Uintptr: //XXX not support yet
 		return errors.New("invalid type")
 	case reflect.Slice, reflect.Array: //StrictArrayMarker, EcmaArrayMarker is not supported
-		length := v.Len()
-		binary.Write(w, binary.BigEndian, StrictArrayMarker)
-		binary.Write(w, binary.BigEndian, uint32(length))
-		for i := 0; i < length; i++ {
-			err = encodeAMF0(w, v.Index(i))
-			if err != nil {
-				return err
-			}
-		}
-		binary.Write(w, binary.BigEndian, ObjectEndMarker)
+		// length := v.Len()
+		// binary.Write(w, binary.BigEndian, StrictArrayMarker)
+		// binary.Write(w, binary.BigEndian, uint32(length))
+		// for i := 0; i < length; i++ {
+		// err = encodeAMF0(w, v.Index(i))
+		// if err != nil {
+		// return err
+		// }
+		// }
+		// binary.Write(w, binary.BigEndian, ObjectEndMarker)
 	default:
 		//TODO
-		//XMLDocumentMarker
 	}
-	return nil
+	return err
+}
+
+func encodeNumberAMF0(w easyio.Writer, num float64, encodeMarker bool) (err error) {
+	var err1, err2 error
+	if encodeMarker {
+		err1 = binary.Write(w, binary.BigEndian, NumberMarker)
+	}
+	err2 = binary.Write(w, binary.BigEndian, float64(num))
+	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
+}
+
+func encodeBooleanAMF0(w easyio.Writer, boolean bool, encodeMarker bool) (err error) {
+	var err1, err2 error
+	if encodeMarker {
+		err1 = binary.Write(w, binary.BigEndian, BooleanMarker)
+	}
+	err2 = binary.Write(w, binary.BigEndian, boolean)
+	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
+}
+
+func encodeStringAMF0(w easyio.Writer, str string, encodeMarker bool) (err error) {
+	var err1, err2, err3 error
+	if encodeMarker {
+		if len(str) <= 0xffff {
+			err1 = binary.Write(w, binary.BigEndian, StringMarker)
+		} else {
+			err1 = binary.Write(w, binary.BigEndian, LongStringMarker)
+		}
+	}
+	if len(str) <= 0xffff {
+		err2 = binary.Write(w, binary.BigEndian, uint16(len(str)))
+	} else {
+		err2 = binary.Write(w, binary.BigEndian, uint32(len(str)))
+	}
+	_, err3 = w.Write([]byte(str))
+	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
+}
+
+func encodeObjectAMF0(w easyio.Writer, obj reflect.Value, encodeMarker bool) (err error) {
+	var err1, err2, err3 error
+	if encodeMarker {
+		err1 = binary.Write(w, binary.BigEndian, ObjectMarker)
+	}
+	iter := obj.MapRange()
+	for iter.Next() {
+		key := iter.Key()
+		if key.Kind() != reflect.String {
+			return errors.New("invalid type")
+		}
+		err = encodeAMF0(w, key.String(), false)
+		if err != nil {
+			return err
+		}
+		value := iter.Value()
+		err = encodeAMF0(w, value.Interface(), true)
+		if err != nil {
+			return err
+		}
+	}
+	_, err2 = w.Write([]byte{0x00, 0x00})
+	err3 = binary.Write(w, binary.BigEndian, ObjectEndMarker)
+	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
 }
