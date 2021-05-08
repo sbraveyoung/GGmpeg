@@ -3,10 +3,12 @@ package rtmp
 import (
 	"fmt"
 	"net"
+
+	"github.com/SmartBrave/utils/easyio"
 )
 
 type RTMP struct {
-	conn      rtmpConn
+	conn      easyio.EasyReadWriter
 	message   map[uint32]Message //message stream id
 	chunkSize uint32
 }
@@ -14,39 +16,31 @@ type RTMP struct {
 func NewRTMP(conn net.Conn) (rtmp *RTMP) {
 	return &RTMP{
 		conn: rtmpConn{
-			conn: conn,
+			Conn: conn,
 		},
+		chunkSize: 128,
 	}
 }
 
 func (rtmp *RTMP) Handler() {
-	err := NewServer().Handshake(rtmp.conn)
+	err := NewServer().Handshake(rtmp)
 	if err != nil {
 		fmt.Println("handshake error:", err)
 		return
 	}
 
 	for {
-		chunk, err := ParseChunk(rtmp.conn)
+		fmt.Println("-----------------------------------")
+		chunk, err := ParseChunk(rtmp)
 		if err != nil {
 			fmt.Println("NewChunk error:", err)
 			continue
 		}
 
-		var message Message
-		var ok bool
-		if message, ok = rtmp.message[chunk.MessageStreamID]; !ok {
-			message, err = ParseMessage(rtmp, chunk)
-			if err != nil {
-				fmt.Println("NewMessage error:", err)
-				continue
-			}
-			fmt.Printf("message:%+v\n", message)
-			//TODO save MessageStreamID to rtmp.message
-		} else {
-			message.Combine(chunk)
+		err = ParseMessage(rtmp, chunk)
+		if err != nil {
+			fmt.Println("ParseMessage error:", err)
+			continue
 		}
-		message.Do(rtmp.conn)
-		break
 	}
 }

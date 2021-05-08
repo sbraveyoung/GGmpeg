@@ -8,12 +8,12 @@ import (
 )
 
 type rtmpConn struct {
-	conn net.Conn
+	net.Conn
 }
 
-func (c *rtmpConn) read(b []byte) (err error) {
+func (conn rtmpConn) ReadFull(b []byte) (err error) {
 	var n int
-	n, err = io.ReadFull(c.conn, b)
+	n, err = io.ReadFull(conn, b)
 	if err != nil {
 		return errors.Wrap(err, "rtmp.conn.Read")
 	}
@@ -23,14 +23,14 @@ func (c *rtmpConn) read(b []byte) (err error) {
 	return err
 }
 
-func (c *rtmpConn) readN(n int) (b []byte, err error) {
+func (conn rtmpConn) ReadN(n int) (b []byte, err error) {
 	b = make([]byte, n)
-	err = c.read(b)
+	err = conn.ReadFull(b)
 	return b, err
 }
 
-func (c *rtmpConn) Write(b []byte) error {
-	n, err := c.conn.Write(b)
+func (conn rtmpConn) WriteFull(b []byte) error {
+	n, err := conn.Write(b)
 	if err != nil {
 		return errors.Wrap(err, "conn.Write")
 	}

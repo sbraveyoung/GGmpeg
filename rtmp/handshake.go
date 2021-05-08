@@ -138,13 +138,13 @@ func (s *Server) makeS2() (s2 []byte) {
 // func (rtmp *RTMP) makeS1Complex() (s1 []byte) {
 // }
 
-func (s *Server) Handshake(conn rtmpConn) (err error) {
+func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	c0c1c2 := [C0_LEN + C1_LEN + C2_LEN]byte{}
 	c0 := c0c1c2[:C0_LEN]
 	c1 := c0c1c2[C0_LEN : C0_LEN+C1_LEN]
 	c2 := c0c1c2[C0_LEN+C1_LEN:]
 
-	err = conn.read(c0)
+	err = rtmp.conn.ReadFull(c0)
 	if err != nil {
 		return errors.Wrap(err, "read c0 from conn")
 	}
@@ -154,7 +154,7 @@ func (s *Server) Handshake(conn rtmpConn) (err error) {
 		return errors.New("invalid client version")
 	}
 
-	err = conn.read(c1)
+	err = rtmp.conn.ReadFull(c1)
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
@@ -166,19 +166,19 @@ func (s *Server) Handshake(conn rtmpConn) (err error) {
 	if binary.BigEndian.Uint32(c1[4:8]) == 0x0 {
 		s.parseC1(c1)
 
-		err = conn.Write(s0)
+		err = rtmp.conn.WriteFull(s0)
 		if err != nil {
 			return errors.Wrap(err, "write s0 to conn")
 		}
 
 		s1 := s.makeS1()
 		fmt.Printf("s1:%x\n", s1)
-		err = conn.Write(s1)
+		err = rtmp.conn.WriteFull(s1)
 		if err != nil {
 			return errors.Wrap(err, "write s1 to conn")
 		}
 
-		err = conn.read(c2)
+		err = rtmp.conn.ReadFull(c2)
 		if err != nil {
 			return errors.Wrap(err, "read c2 from conn")
 		}
@@ -186,7 +186,7 @@ func (s *Server) Handshake(conn rtmpConn) (err error) {
 		s.parseC2(c2)
 
 		s2 := s.makeS2()
-		err = conn.Write(s2)
+		err = rtmp.conn.WriteFull(s2)
 		if err != nil {
 			return errors.Wrap(err, "write s2 to conn")
 		}

@@ -39,7 +39,7 @@ const (
 
 type AMF0 struct{}
 
-func (AMF0) Decode(r easyio.Reader) (res []interface{}, err error) {
+func (AMF0) Decode(r easyio.EasyReader) (res []interface{}, err error) {
 	var referenceIndex []int
 	var i interface{}
 	var marker Marker
@@ -70,7 +70,7 @@ func (AMF0) Decode(r easyio.Reader) (res []interface{}, err error) {
 	return res, nil
 }
 
-func decodeAMF0(r easyio.Reader) (marker Marker, i interface{}, err error) {
+func decodeAMF0(r easyio.EasyReader) (marker Marker, i interface{}, err error) {
 	var b []byte
 	b, err = r.ReadN(1)
 	if err != nil {
@@ -119,17 +119,17 @@ func decodeAMF0(r easyio.Reader) (marker Marker, i interface{}, err error) {
 	return marker, i, err
 }
 
-func decodeNumberAMF0(r easyio.Reader) (num float64, err error) {
+func decodeNumberAMF0(r easyio.EasyReader) (num float64, err error) {
 	err = binary.Read(r, binary.BigEndian, &num)
 	return num, err
 }
 
-func decodeBooleanAMF0(r easyio.Reader) (boolean bool, err error) {
+func decodeBooleanAMF0(r easyio.EasyReader) (boolean bool, err error) {
 	err = binary.Read(r, binary.BigEndian, &boolean)
 	return boolean, err
 }
 
-func decodeStringAMF0(r easyio.Reader) (str string, err error) {
+func decodeStringAMF0(r easyio.EasyReader) (str string, err error) {
 	var length uint16
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -141,7 +141,7 @@ func decodeStringAMF0(r easyio.Reader) (str string, err error) {
 	return string(b), err
 }
 
-func decodeLongStringAMF0(r easyio.Reader) (str string, err error) {
+func decodeLongStringAMF0(r easyio.EasyReader) (str string, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -154,7 +154,7 @@ func decodeLongStringAMF0(r easyio.Reader) (str string, err error) {
 }
 
 //TODO: utf-8 support
-func readByteAMF0(r easyio.Reader, length int) (b []byte, err error) {
+func readByteAMF0(r easyio.EasyReader, length int) (b []byte, err error) {
 	b, err = r.ReadN(int(length))
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func readByteAMF0(r easyio.Reader, length int) (b []byte, err error) {
 	return b, nil
 }
 
-func decodeObjectAMF0(r easyio.Reader) (res map[string]interface{}, err error) {
+func decodeObjectAMF0(r easyio.EasyReader) (res map[string]interface{}, err error) {
 	var p *pair
 	res = make(map[string]interface{})
 	for {
@@ -178,7 +178,7 @@ func decodeObjectAMF0(r easyio.Reader) (res map[string]interface{}, err error) {
 	return res, nil
 }
 
-func decodeTypedObjectAMF0(r easyio.Reader) (className string, res map[string]interface{}, err error) {
+func decodeTypedObjectAMF0(r easyio.EasyReader) (className string, res map[string]interface{}, err error) {
 	className, err = decodeStringAMF0(r)
 	if err != nil {
 		return className, res, err
@@ -193,7 +193,7 @@ type pair struct {
 	value interface{}
 }
 
-func readPairAMF0(r easyio.Reader) (p *pair, err error) {
+func readPairAMF0(r easyio.EasyReader) (p *pair, err error) {
 	p = &pair{}
 	p.key, err = decodeStringAMF0(r)
 	if err != nil {
@@ -210,12 +210,12 @@ func readPairAMF0(r easyio.Reader) (p *pair, err error) {
 	return p, nil
 }
 
-func decodeReferenceAMF0(r easyio.Reader) (index uint16, err error) {
+func decodeReferenceAMF0(r easyio.EasyReader) (index uint16, err error) {
 	err = binary.Read(r, binary.BigEndian, &index)
 	return index, err
 }
 
-func decodeEcmaArrayAMF0(r easyio.Reader) (res map[string]interface{}, err error) {
+func decodeEcmaArrayAMF0(r easyio.EasyReader) (res map[string]interface{}, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -237,7 +237,7 @@ func decodeEcmaArrayAMF0(r easyio.Reader) (res map[string]interface{}, err error
 	return res, nil
 }
 
-func decodeStrictArrayAMF0(r easyio.Reader) (res []interface{}, err error) {
+func decodeStrictArrayAMF0(r easyio.EasyReader) (res []interface{}, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -256,7 +256,7 @@ func decodeStrictArrayAMF0(r easyio.Reader) (res []interface{}, err error) {
 	return res, nil
 }
 
-func decodeDateAMF0(r easyio.Reader) (date time.Time, err error) {
+func decodeDateAMF0(r easyio.EasyReader) (date time.Time, err error) {
 	var timestamp float64
 	timestamp, err = decodeNumberAMF0(r)
 	if err != nil {
@@ -272,7 +272,7 @@ func decodeDateAMF0(r easyio.Reader) (date time.Time, err error) {
 	return time.Unix(0, int64(timestamp)*1e6), nil
 }
 
-func decodeXMLDocumentAMF0(r easyio.Reader) (xml []byte, err error) {
+func decodeXMLDocumentAMF0(r easyio.EasyReader) (xml []byte, err error) {
 	var length uint32
 	err = binary.Read(r, binary.BigEndian, &length)
 	if err != nil {
@@ -282,11 +282,11 @@ func decodeXMLDocumentAMF0(r easyio.Reader) (xml []byte, err error) {
 	return readByteAMF0(r, int(length))
 }
 
-func (AMF0) Encode(w easyio.Writer, obj interface{}) (err error) {
+func (AMF0) Encode(w easyio.EasyWriter, obj interface{}) (err error) {
 	return encodeAMF0(w, obj, true)
 }
 
-func encodeAMF0(w easyio.Writer, obj interface{}, encodeMarker bool) (err error) {
+func encodeAMF0(w easyio.EasyWriter, obj interface{}, encodeMarker bool) (err error) {
 	if obj == nil {
 		binary.Write(w, binary.BigEndian, NULLMarker)
 		return
@@ -355,7 +355,7 @@ func encodeAMF0(w easyio.Writer, obj interface{}, encodeMarker bool) (err error)
 	return err
 }
 
-func encodeNumberAMF0(w easyio.Writer, num float64, encodeMarker bool) (err error) {
+func encodeNumberAMF0(w easyio.EasyWriter, num float64, encodeMarker bool) (err error) {
 	var err1, err2 error
 	if encodeMarker {
 		err1 = binary.Write(w, binary.BigEndian, NumberMarker)
@@ -364,7 +364,7 @@ func encodeNumberAMF0(w easyio.Writer, num float64, encodeMarker bool) (err erro
 	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 }
 
-func encodeBooleanAMF0(w easyio.Writer, boolean bool, encodeMarker bool) (err error) {
+func encodeBooleanAMF0(w easyio.EasyWriter, boolean bool, encodeMarker bool) (err error) {
 	var err1, err2 error
 	if encodeMarker {
 		err1 = binary.Write(w, binary.BigEndian, BooleanMarker)
@@ -373,7 +373,7 @@ func encodeBooleanAMF0(w easyio.Writer, boolean bool, encodeMarker bool) (err er
 	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 }
 
-func encodeStringAMF0(w easyio.Writer, str string, encodeMarker bool) (err error) {
+func encodeStringAMF0(w easyio.EasyWriter, str string, encodeMarker bool) (err error) {
 	var err1, err2, err3 error
 	if encodeMarker {
 		if len(str) <= 0xffff {
@@ -391,7 +391,7 @@ func encodeStringAMF0(w easyio.Writer, str string, encodeMarker bool) (err error
 	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
 }
 
-func encodeObjectAMF0(w easyio.Writer, obj reflect.Value, encodeMarker bool) (err error) {
+func encodeObjectAMF0(w easyio.EasyWriter, obj reflect.Value, encodeMarker bool) (err error) {
 	var err1, err2, err3 error
 	if encodeMarker {
 		err1 = binary.Write(w, binary.BigEndian, ObjectMarker)

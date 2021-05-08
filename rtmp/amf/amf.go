@@ -3,6 +3,6 @@ package amf
 import "github.com/SmartBrave/utils/easyio"
 
 type AMF interface {
-	Decode(easyio.Reader) ([]interface{}, error)
-	Encode(easyio.Writer, interface{}) error
+	Decode(easyio.EasyReader) ([]interface{}, error)
+	Encode(easyio.EasyWriter, interface{}) error
 }
