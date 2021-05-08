@@ -14,6 +14,9 @@ type rtmpConn struct {
 func (conn rtmpConn) ReadFull(b []byte) (err error) {
 	var n int
 	n, err = io.ReadFull(conn, b)
+	if err == io.EOF {
+		return err
+	}
 	if err != nil {
 		return errors.Wrap(err, "rtmp.conn.Read")
 	}

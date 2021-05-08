@@ -2,6 +2,7 @@ package rtmp
 
 import (
 	"fmt"
+	"io"
 	"net"
 
 	"github.com/SmartBrave/utils/easyio"
@@ -18,6 +19,7 @@ func NewRTMP(conn net.Conn) (rtmp *RTMP) {
 		conn: rtmpConn{
 			Conn: conn,
 		},
+		message:   make(map[uint32]Message),
 		chunkSize: 128,
 	}
 }
@@ -32,6 +34,10 @@ func (rtmp *RTMP) Handler() {
 	for {
 		fmt.Println("-----------------------------------")
 		chunk, err := ParseChunk(rtmp)
+		if err == io.EOF {
+			fmt.Println("disconnect")
+			break
+		}
 		if err != nil {
 			fmt.Println("NewChunk error:", err)
 			continue

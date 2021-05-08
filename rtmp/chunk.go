@@ -27,7 +27,7 @@ type ChunkBasicHeader struct {
 func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 	b, err := rtmp.conn.ReadN(1)
 	if err != nil {
-		return nil, errors.Wrap(err, "read chunk header from conn")
+		return nil, err
 	}
 	fmt.Printf("basic header:%x\n", b)
 
@@ -39,13 +39,13 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 	case 0x0:
 		b1, err := rtmp.conn.ReadN(1)
 		if err != nil {
-			return nil, errors.Wrap(err, "read basic header fron conn")
+			return nil, err
 		}
 		cbhp.CsID = uint32(b1[0]) + 64
 	case 0x1:
 		b2, err := rtmp.conn.ReadN(2)
 		if err != nil {
-			return nil, errors.Wrap(err, "read basic header fron conn")
+			return nil, err
 		}
 		cbhp.CsID = uint32(b2[0]) + uint32(b2[1])*256 + 64
 	case 0x2:
@@ -58,10 +58,10 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 }
 
 type ChunkMessageHeader struct {
-	MessageTimeStampDelta uint32 //3bytes or 4bytes(extended timestamp)
-	MessageLength         uint32 //3bytes
-	MessageType           MessageType
-	MessageStreamID       uint32 //little-endian 4bytes
+	MessageTimeStamp uint32 //3bytes or 4bytes(extended timestamp)
+	MessageLength    uint32 //3bytes
+	MessageType      MessageType
+	MessageStreamID  uint32 //little-endian 4bytes
 }
 
 func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *ChunkMessageHeader, err error) {
@@ -70,37 +70,37 @@ func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *C
 	case FMT0:
 		b11, err := rtmp.conn.ReadN(11)
 		if err != nil {
-			return nil, errors.Wrap(err, "read message header from conn")
+			return nil, err
 		}
-		cmhp.MessageTimeStampDelta = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
+		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
 		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT1:
 		b7, err := rtmp.conn.ReadN(7)
 		if err != nil {
-			return nil, errors.Wrap(err, "read message header from conn")
+			return nil, err
 		}
-		cmhp.MessageTimeStampDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
+		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
 	case FMT2:
 		b3, err := rtmp.conn.ReadN(3)
 		if err != nil {
-			return nil, errors.Wrap(err, "read message header from conn")
+			return nil, err
 		}
-		cmhp.MessageTimeStampDelta = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
 	case FMT3:
 		//XXX
 	default:
 		return nil, errors.Errorf("invalid fmt:%d", messageType)
 	}
-	if cmhp.MessageTimeStampDelta == 0xffffff {
+	if cmhp.MessageTimeStamp == 0xffffff {
 		b4, err := rtmp.conn.ReadN(4)
 		if err != nil {
-			return nil, errors.Wrap(err, "read extended timestamp from conn")
+			return nil, err
 		}
-		cmhp.MessageTimeStampDelta = binary.BigEndian.Uint32(b4)
+		cmhp.MessageTimeStamp = binary.BigEndian.Uint32(b4)
 	}
 	fmt.Printf("message header struct:%+v\n", *cmhp)
 	return cmhp, nil
@@ -115,18 +115,18 @@ type Chunk struct {
 func ParseChunk(rtmp *RTMP) (cp *Chunk, err error) {
 	basicHeader, err := parseChunkBasicHeader(rtmp)
 	if err != nil {
-		return nil, errors.Wrap(err, "parseChunkBasicHeader")
+		return nil, err
 	}
 
 	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader.Fmt)
 	if err != nil {
-		return nil, errors.Wrap(err, "parseChunkMessageHeader")
+		return nil, err
 	}
 
 	b := make([]byte, messageHeader.MessageLength)
 	err = rtmp.conn.ReadFull(b)
 	if err != nil {
-		return nil, errors.Wrap(err, "conn.read")
+		return nil, err
 	}
 	return &Chunk{
 		ChunkBasicHeader:   *basicHeader,
@@ -143,10 +143,10 @@ func NewChunk(messageType MessageType, fmt MessageHeaderType, payload []byte) (c
 			CsID: 2,
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
-			MessageTimeStampDelta: 0,
-			MessageLength:         uint32(len(payload)),
-			MessageType:           messageType,
-			MessageStreamID:       0,
+			MessageTimeStamp: 0,
+			MessageLength:    uint32(len(payload)),
+			MessageType:      messageType,
+			MessageStreamID:  0,
 		},
 		Payload: easyio.NewEasyReader(bytes.NewReader(payload)),
 	}
@@ -157,16 +157,16 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
 	switch chunk.Fmt {
 	case FMT0:
-		b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
 		b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
 		b = append(b, uint8(chunk.MessageType))
 		b = append(b, 0x0, 0x0, 0x0, 0x0)
 	case FMT1:
-		b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
 		b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
 		b = append(b, uint8(chunk.MessageType))
 	case FMT2:
-		b = append(b, uint8(chunk.MessageTimeStampDelta>>16), uint8(chunk.MessageTimeStampDelta>>8), uint8(chunk.MessageTimeStampDelta))
+		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
 	case FMT3:
 		//XXX
 	default:

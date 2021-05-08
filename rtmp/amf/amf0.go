@@ -52,20 +52,20 @@ func (AMF0) Decode(r easyio.EasyReader) (res []interface{}, err error) {
 			return res, err
 		}
 		//NOTE:i should not be set to nil value and typed pointer such as `i=(int*)nil`
-		if i != nil {
-			switch marker {
-			case ObjectMarker, EcmaArrayMarker, TypedObjectMarker:
-				referenceIndex = append(referenceIndex, len(res))
-			case ReferenceMarker:
-				index := i.(uint16)
-				if int(index) < len(referenceIndex) {
-					i = res[referenceIndex[index]]
-				}
-			default:
-				//do nothing
+		// if i != nil {
+		switch marker {
+		case ObjectMarker, EcmaArrayMarker, TypedObjectMarker:
+			referenceIndex = append(referenceIndex, len(res))
+		case ReferenceMarker:
+			index := i.(uint16)
+			if int(index) < len(referenceIndex) {
+				i = res[referenceIndex[index]]
 			}
-			res = append(res, i)
+		default:
+			//do nothing
 		}
+		res = append(res, i)
+		// }
 	}
 	return res, nil
 }
@@ -88,7 +88,8 @@ func decodeAMF0(r easyio.EasyReader) (marker Marker, i interface{}, err error) {
 	case ObjectMarker: //complex types
 		i, err = decodeObjectAMF0(r)
 	case MovieclipMarker: //not supported, do nothing
-	case NULLMarker: //no futher information is encoded, do nothing
+	case NULLMarker:
+		i, err = nil, nil
 	case UndefinedMarker: //no futher information is encoded, do nothing
 	case ReferenceMarker:
 		i, err = decodeReferenceAMF0(r)

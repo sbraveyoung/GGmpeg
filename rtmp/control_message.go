@@ -77,10 +77,9 @@ func (ucm *UserControlMessage) Do() (err error) {
 	var b []byte
 	switch ucm.EventType {
 	case StreamBegin:
-		ucm.EventData = make([]byte, 4, 4)
 		b = make([]byte, 4+2)
 		binary.BigEndian.PutUint16(b, uint16(ucm.EventType))
-		copy(b[2:], ucm.EventData)
+		binary.BigEndian.PutUint32(b[2:], ucm.messageStreamID)
 		return NewChunk(USER_CONTROL_MESSAGE, FMT0, b).Send(ucm.rtmp)
 	case StreamEOF:
 	case StreamDry:

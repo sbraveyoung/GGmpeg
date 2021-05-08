@@ -7,27 +7,30 @@ import (
 type MessageBase struct {
 	rtmp                *RTMP
 	messageTime         uint32
+	messageTimeDelta    uint32
 	messageLength       uint32
 	messageLengthRemain uint32
 	messageType         MessageType
 	messageStreamID     uint32
 }
 
-func (mb MessageBase) GetInfo() *MessageBase {
-	return &mb
+func (mb *MessageBase) GetInfo() *MessageBase {
+	return mb
 }
 
-func (mb MessageBase) SetInfo(mbNew *MessageBase) {
+func (mb *MessageBase) SetInfo(mbNew *MessageBase) {
 	mb.rtmp = mbNew.rtmp
 	mb.messageTime = mbNew.messageTime
+	mb.messageTimeDelta = mbNew.messageTimeDelta
 	mb.messageLength = mbNew.messageLength
 	mb.messageLengthRemain = mbNew.messageLengthRemain
 	mb.messageType = mbNew.messageType
 	mb.messageStreamID = mbNew.messageStreamID
 }
 
-func (mb MessageBase) Update(mbNew *MessageBase) {
+func (mb *MessageBase) Update(mbNew *MessageBase) {
 	//do not update other fields
+	mb.messageTimeDelta = mbNew.messageTimeDelta
 	mb.messageLengthRemain = mbNew.messageLengthRemain
 }
 
@@ -71,24 +74,24 @@ type MessageType uint8
 
 const (
 	//control message
-	SET_CHUNK_SIZE MessageType = iota + 1
-	ABORT_MESSAGE
-	ACKNOWLEDGEMENT
-	USER_CONTROL_MESSAGE
-	WINDOW_ACKNOWLEDGEMENT_SIZE
-	SET_PEER_BANDWIDTH
+	SET_CHUNK_SIZE              MessageType = iota + 1 //1
+	ABORT_MESSAGE                                      //2
+	ACKNOWLEDGEMENT                                    //3
+	USER_CONTROL_MESSAGE                               //4
+	WINDOW_ACKNOWLEDGEMENT_SIZE                        //5
+	SET_PEER_BANDWIDTH                                 //6
 
 	//common message
-	AUDIO_MESSAGE = iota + 2
-	VIDEO_MESSAGE
+	AUDIO_MESSAGE = iota + 2 //8
+	VIDEO_MESSAGE            //9
 
 	//command message
-	DATA_MESSAGE_AMF3 = iota + 7
-	SHARE_OBJECT_MESSAGE_AMF3
-	COMMAND_MESSAGE_AMF3
-	DATA_MESSAGE_AMF0
-	SHARE_OBJECT_MESSAGE_AMF0
-	COMMAND_MESSAGE_AMF0
+	DATA_MESSAGE_AMF3         = iota + 7 //15
+	SHARE_OBJECT_MESSAGE_AMF3            //16
+	COMMAND_MESSAGE_AMF3                 //17
+	DATA_MESSAGE_AMF0                    //18
+	SHARE_OBJECT_MESSAGE_AMF0            //19
+	COMMAND_MESSAGE_AMF0                 //20
 )
 
 func ParseMessage(rtmp *RTMP, chunk *Chunk) (err error) {
@@ -121,7 +124,7 @@ func ParseMessage(rtmp *RTMP, chunk *Chunk) (err error) {
 
 		mb := &MessageBase{
 			rtmp:                rtmp,
-			messageTime:         chunk.MessageTimeStampDelta,
+			messageTime:         chunk.MessageTimeStamp,
 			messageLength:       chunk.MessageLength,
 			messageLengthRemain: 0,
 			messageType:         chunk.MessageType,
@@ -138,7 +141,20 @@ func ParseMessage(rtmp *RTMP, chunk *Chunk) (err error) {
 		if !ok {
 			return errors.New("invalid chunk format")
 		} else {
-			message.Update(chunk)
+			mb := message.GetInfo()
+			switch chunk.Fmt {
+			case FMT1, FMT2:
+				mb.messageTimeDelta = chunk.MessageTimeStamp
+				message.SetInfo(mb)
+				rtmp.message[mb.messageStreamID] = message
+			case FMT3: //do nothing
+			default:
+				return errors.New("invalid chunk format")
+			}
+			err = message.Update(chunk)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
