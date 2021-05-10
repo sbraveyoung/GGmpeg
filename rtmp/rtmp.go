@@ -10,8 +10,9 @@ import (
 
 type RTMP struct {
 	conn      easyio.EasyReadWriter
-	message   map[uint32]Message //message stream id
-	chunkSize uint32
+	lastChunk *Chunk
+	// message      map[uint32]Message //message stream id
+	maxChunkSize int
 }
 
 func NewRTMP(conn net.Conn) (rtmp *RTMP) {
@@ -19,8 +20,8 @@ func NewRTMP(conn net.Conn) (rtmp *RTMP) {
 		conn: rtmpConn{
 			Conn: conn,
 		},
-		message:   make(map[uint32]Message),
-		chunkSize: 128,
+		// message:      make(map[uint32]Message),
+		maxChunkSize: 128,
 	}
 }
 
@@ -33,17 +34,11 @@ func (rtmp *RTMP) Handler() {
 
 	for {
 		fmt.Println("-----------------------------------")
-		chunk, err := ParseChunk(rtmp)
+		err = ParseMessage(rtmp)
 		if err == io.EOF {
 			fmt.Println("disconnect")
 			break
 		}
-		if err != nil {
-			fmt.Println("NewChunk error:", err)
-			continue
-		}
-
-		err = ParseMessage(rtmp, chunk)
 		if err != nil {
 			fmt.Println("ParseMessage error:", err)
 			continue

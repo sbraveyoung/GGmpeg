@@ -1,44 +1,50 @@
 package rtmp
 
 import (
+	"fmt"
+
+	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
 )
 
 type MessageBase struct {
-	rtmp                *RTMP
-	messageTime         uint32
-	messageTimeDelta    uint32
-	messageLength       uint32
-	messageLengthRemain uint32
-	messageType         MessageType
-	messageStreamID     uint32
+	rtmp             *RTMP
+	messageTime      uint32
+	messageTimeDelta uint32
+	messageLength    int
+	messageType      MessageType
+	messageStreamID  uint32
+	amf              amf_pkg.AMF
+	messagePayload   []byte //TODO: maybe using easyio.EasyReadWriter
 }
 
 func (mb *MessageBase) GetInfo() *MessageBase {
 	return mb
 }
 
-func (mb *MessageBase) SetInfo(mbNew *MessageBase) {
-	mb.rtmp = mbNew.rtmp
-	mb.messageTime = mbNew.messageTime
-	mb.messageTimeDelta = mbNew.messageTimeDelta
-	mb.messageLength = mbNew.messageLength
-	mb.messageLengthRemain = mbNew.messageLengthRemain
-	mb.messageType = mbNew.messageType
-	mb.messageStreamID = mbNew.messageStreamID
-}
-
 func (mb *MessageBase) Update(mbNew *MessageBase) {
 	//do not update other fields
 	mb.messageTimeDelta = mbNew.messageTimeDelta
-	mb.messageLengthRemain = mbNew.messageLengthRemain
+}
+
+func (mb *MessageBase) Append(chunk *Chunk) {
+	mb.messagePayload = append(mb.messagePayload, chunk.Payload...)
+}
+
+func (mb *MessageBase) Done() int {
+	fmt.Printf("done? messageLength:%d, len(payload):%d\n", mb.messageLength, len(mb.messagePayload))
+	return mb.messageLength - len(mb.messagePayload)
 }
 
 type Message interface {
-	Update(*Chunk) error
-	Do() error
+	Append(*Chunk)
+	Done() int
 	GetInfo() *MessageBase
-	SetInfo(*MessageBase)
+	Update(*MessageBase)
+
+	Parse() error
+	Do() error
 }
 
 // type MessageHeader struct {
@@ -94,69 +100,86 @@ const (
 	COMMAND_MESSAGE_AMF0                 //20
 )
 
-func ParseMessage(rtmp *RTMP, chunk *Chunk) (err error) {
+func ParseMessage(rtmp *RTMP) (err error) {
+	var chunk *Chunk
 	var message Message
-	if chunk.Fmt == FMT0 {
-		switch chunk.MessageType {
-		case SET_CHUNK_SIZE:
-			// return newSetChunkSizeMessage(rtmp, chunk)
-		case ABORT_MESSAGE:
-		case ACKNOWLEDGEMENT:
-		case USER_CONTROL_MESSAGE:
-		case WINDOW_ACKNOWLEDGEMENT_SIZE:
-		case SET_PEER_BANDWIDTH:
-		// case XXX:
+	// var ok bool
 
-		case AUDIO_MESSAGE:
-		case VIDEO_MESSAGE:
-
-		case DATA_MESSAGE_AMF0, DATA_MESSAGE_AMF3:
-		case SHARE_OBJECT_MESSAGE_AMF0, SHARE_OBJECT_MESSAGE_AMF3:
-		case COMMAND_MESSAGE_AMF0, COMMAND_MESSAGE_AMF3:
-			message, err = parseCommandMessage(rtmp, chunk)
-		default:
-			return errors.New("invalid message type")
-		}
-
+	//read message payload from many chunks
+	for {
+		chunk, err = ParseChunk(rtmp, message)
 		if err != nil {
 			return err
 		}
 
-		mb := &MessageBase{
-			rtmp:                rtmp,
-			messageTime:         chunk.MessageTimeStamp,
-			messageLength:       chunk.MessageLength,
-			messageLengthRemain: 0,
-			messageType:         chunk.MessageType,
-			messageStreamID:     chunk.MessageStreamID,
-		}
-		if mb.messageLength > rtmp.chunkSize {
-			mb.messageLengthRemain = mb.messageLength - rtmp.chunkSize
-		}
-		message.SetInfo(mb)
-		rtmp.message[mb.messageStreamID] = message
-	} else {
-		var ok bool
-		message, ok = rtmp.message[chunk.MessageStreamID]
-		if !ok {
-			return errors.New("invalid chunk format")
-		} else {
-			mb := message.GetInfo()
-			switch chunk.Fmt {
-			case FMT1, FMT2:
-				mb.messageTimeDelta = chunk.MessageTimeStamp
-				message.SetInfo(mb)
-				rtmp.message[mb.messageStreamID] = message
-			case FMT3: //do nothing
+		// message, ok = rtmp.message[chunk.MessageStreamID]
+		// if !ok {
+		if message == nil {
+			mb := MessageBase{
+				rtmp:        rtmp,
+				messageTime: chunk.MessageTimeStamp,
+				// messageTimeDelta:0
+				messageLength:   chunk.MessageLength,
+				messageType:     chunk.MessageType,
+				messageStreamID: chunk.MessageStreamID,
+				amf:             amf_pkg.AMF0,
+				messagePayload:  make([]byte, 0, chunk.MessageLength),
+			}
+
+			switch chunk.MessageType {
+			case SET_CHUNK_SIZE:
+				// return newSetChunkSizeMessage(rtmp, chunk)
+			case ABORT_MESSAGE:
+			case ACKNOWLEDGEMENT:
+			case USER_CONTROL_MESSAGE:
+			case WINDOW_ACKNOWLEDGEMENT_SIZE:
+			case SET_PEER_BANDWIDTH:
+
+			case AUDIO_MESSAGE:
+			case VIDEO_MESSAGE:
+
+			case DATA_MESSAGE_AMF3:
+				// mb.amf = amf_pkg.AMF3
+				fallthrough
+			case DATA_MESSAGE_AMF0:
+				message = &DataMessage{
+					MessageBase: mb,
+				}
+			case SHARE_OBJECT_MESSAGE_AMF3:
+				// mb.amf = amf_pkg.AMF3
+				fallthrough
+			case SHARE_OBJECT_MESSAGE_AMF0:
+			case COMMAND_MESSAGE_AMF3:
+				// mb.amf = amf_pkg.AMF3
+				fallthrough
+			case COMMAND_MESSAGE_AMF0:
+				// message, err = parseCommandMessage(rtmp, chunk)
+				message = &CommandMessage{
+					MessageBase: mb,
+				}
 			default:
-				return errors.New("invalid chunk format")
+				return errors.New("invalid message type")
 			}
-			err = message.Update(chunk)
-			if err != nil {
-				return err
-			}
+		}
+		// } else {
+		// mb := message.GetInfo()
+		// switch chunk.Fmt {
+		// case FMT1, FMT2:
+		// mb.messageTimeDelta = chunk.MessageTimeStamp
+		// message.Update(mb)
+		// rtmp.message[mb.messageStreamID] = message
+		// case FMT3: //do nothing
+		// default:
+		// return errors.New("invalid chunk format")
+		// }
+		// }
+
+		message.Append(chunk)
+		// rtmp.message[chunk.MessageStreamID] = message
+		if message.Done() == 0 {
+			break
 		}
 	}
 
-	return message.Do()
+	return easyerrors.HandleMultiError(easyerrors.Simple(), message.Parse(), message.Do())
 }

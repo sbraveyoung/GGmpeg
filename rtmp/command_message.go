@@ -55,35 +55,27 @@ type CommandMessage struct {
 	PublishingType string //publish
 }
 
-func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err error) {
+func (cm *CommandMessage) Parse() (err error) {
 	var array []interface{}
-
-	var amf amf_pkg.AMF
-	amf = amf_pkg.AMF0{}
-	if chunk.MessageType == COMMAND_MESSAGE_AMF3 {
-		// amf= amf_pkg.AMF3{}
-	}
-	array, err = amf.Decode(chunk.Payload)
+	array, err = cm.amf.Decode(easyio.NewEasyReader(bytes.NewReader(cm.messagePayload)))
 	if err != nil {
-		return nil, errors.Wrap(err, "amf.Decode")
+		return errors.Wrap(err, "amf.Decode")
 	}
 
 	if len(array) < 3 {
-		return nil, errors.New("invalid data")
+		return errors.New("invalid data")
 	}
 	for index, a := range array {
 		fmt.Println("index:", index, " a.type:", reflect.TypeOf(a), " a.Value:", reflect.ValueOf(a))
 	}
-	cm = &CommandMessage{
-		CommandName:   array[0].(string),
-		TranscationID: int(array[1].(float64)),
-	}
 
+	cm.CommandName = array[0].(string)
+	cm.TranscationID = int(array[1].(float64))
 	switch cm.CommandName {
 	case CONNECT:
 		err = mapstructure.Decode(array[2], &cm.CommandObject)
 		if err != nil {
-			return nil, errors.Wrap(err, "mapstructure.Decode")
+			return errors.Wrap(err, "mapstructure.Decode")
 		}
 	case RELEASE_STREAM, FCPUBLISH: //ignore
 		cm.PublishingName = array[3].(string)
@@ -92,19 +84,19 @@ func parseCommandMessage(rtmp *RTMP, chunk *Chunk) (cm *CommandMessage, err erro
 		cm.PublishingName = array[3].(string)
 		cm.PublishingType = array[4].(string)
 	}
-	return cm, nil
-}
-
-func (cm *CommandMessage) Update(chunk *Chunk) error {
-	newCm, err := parseCommandMessage(cm.rtmp, chunk)
-	if err != nil {
-		return err
-	}
-	cm.CommandName = newCm.CommandName
-	cm.TranscationID = newCm.TranscationID
-	cm.CommandObject = newCm.CommandObject
 	return nil
 }
+
+// func (cm *CommandMessage) Update(chunk *Chunk) error {
+// newCm, err := parseCommandMessage(cm.rtmp, chunk)
+// if err != nil {
+// return err
+// }
+// cm.CommandName = newCm.CommandName
+// cm.TranscationID = newCm.TranscationID
+// cm.CommandObject = newCm.CommandObject
+// return nil
+// }
 
 func (cm *CommandMessage) Do() (err error) {
 	switch cm.CommandName {
@@ -173,7 +165,7 @@ func NewCommandMessageResponse(rtmp *RTMP, commandName, commandRespName string, 
 func (cmr *CommandMessageResponse) Do() (err error) {
 	buf := bytes.NewBuffer([]byte{})
 	writer := easyio.NewEasyWriter(buf)
-	amf := amf_pkg.AMF0{}
+	amf := amf_pkg.AMF0
 
 	var err1, err2, err3, err4 error
 	err1 = amf.Encode(writer, cmr.CommandRespName)

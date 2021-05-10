@@ -1,12 +1,10 @@
 package rtmp
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 
 	"github.com/SmartBrave/utils/easyerrors"
-	"github.com/SmartBrave/utils/easyio"
 	"github.com/pkg/errors"
 )
 
@@ -59,12 +57,16 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 
 type ChunkMessageHeader struct {
 	MessageTimeStamp uint32 //3bytes or 4bytes(extended timestamp)
-	MessageLength    uint32 //3bytes
+	MessageLength    int    //3bytes
 	MessageType      MessageType
 	MessageStreamID  uint32 //little-endian 4bytes
 }
 
 func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *ChunkMessageHeader, err error) {
+	if messageType != FMT0 && rtmp.lastChunk == nil {
+		return nil, errors.Errorf("invalid fmt_a:%d", messageType)
+	}
+
 	cmhp = &ChunkMessageHeader{}
 	switch messageType {
 	case FMT0:
@@ -73,7 +75,7 @@ func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *C
 			return nil, err
 		}
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
-		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
+		cmhp.MessageLength = int(0x00)<<24 | int(b11[3])<<16 | int(b11[4])<<8 | int(b11[5])
 		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT1:
@@ -82,18 +84,25 @@ func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *C
 			return nil, err
 		}
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
-		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
+		cmhp.MessageLength = int(0x00)<<24 | int(b7[3])<<16 | int(b7[4])<<8 | int(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
+		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
 	case FMT2:
 		b3, err := rtmp.conn.ReadN(3)
 		if err != nil {
 			return nil, err
 		}
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+		cmhp.MessageLength = rtmp.lastChunk.MessageLength
+		cmhp.MessageType = rtmp.lastChunk.MessageType
+		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
 	case FMT3:
-		//XXX
+		cmhp.MessageTimeStamp = rtmp.lastChunk.MessageTimeStamp
+		cmhp.MessageLength = rtmp.lastChunk.MessageLength
+		cmhp.MessageType = rtmp.lastChunk.MessageType
+		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
 	default:
-		return nil, errors.Errorf("invalid fmt:%d", messageType)
+		return nil, errors.Errorf("invalid fmt_b:%d", messageType)
 	}
 	if cmhp.MessageTimeStamp == 0xffffff {
 		b4, err := rtmp.conn.ReadN(4)
@@ -109,10 +118,10 @@ func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *C
 type Chunk struct {
 	ChunkBasicHeader
 	ChunkMessageHeader
-	Payload easyio.EasyReader
+	Payload []byte
 }
 
-func ParseChunk(rtmp *RTMP) (cp *Chunk, err error) {
+func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 	basicHeader, err := parseChunkBasicHeader(rtmp)
 	if err != nil {
 		return nil, err
@@ -123,16 +132,27 @@ func ParseChunk(rtmp *RTMP) (cp *Chunk, err error) {
 		return nil, err
 	}
 
-	b := make([]byte, messageHeader.MessageLength)
+	chunkSize := messageHeader.MessageLength
+	if chunkSize > rtmp.maxChunkSize {
+		chunkSize = rtmp.maxChunkSize
+	}
+	if message != nil {
+		if remain := message.Done(); chunkSize > remain {
+			chunkSize = remain
+		}
+	}
+	b := make([]byte, chunkSize)
 	err = rtmp.conn.ReadFull(b)
 	if err != nil {
 		return nil, err
 	}
-	return &Chunk{
+	cp = &Chunk{
 		ChunkBasicHeader:   *basicHeader,
 		ChunkMessageHeader: *messageHeader,
-		Payload:            easyio.NewEasyReader(bytes.NewReader(b)),
-	}, nil
+		Payload:            b,
+	}
+	rtmp.lastChunk = cp
+	return cp, nil
 }
 
 //NOTE: ensure len(payload) <= maxChunkSize
@@ -144,11 +164,11 @@ func NewChunk(messageType MessageType, fmt MessageHeaderType, payload []byte) (c
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
 			MessageTimeStamp: 0,
-			MessageLength:    uint32(len(payload)),
+			MessageLength:    len(payload),
 			MessageType:      messageType,
 			MessageStreamID:  0,
 		},
-		Payload: easyio.NewEasyReader(bytes.NewReader(payload)),
+		Payload: payload,
 	}
 }
 
@@ -170,7 +190,7 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	case FMT3:
 		//XXX
 	default:
-		return errors.Errorf("invalid fmt:%d", chunk.Fmt)
+		return errors.Errorf("invalid fmt_c:%d", chunk.Fmt)
 	}
-	return easyerrors.HandleMultiError(easyerrors.Simple(), rtmp.conn.WriteFull(b), easyio.CopyFull(rtmp.conn, chunk.Payload))
+	return easyerrors.HandleMultiError(easyerrors.Simple(), rtmp.conn.WriteFull(b), rtmp.conn.WriteFull(chunk.Payload))
 }
