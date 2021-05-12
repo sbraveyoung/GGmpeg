@@ -1,48 +1,93 @@
 package rtmp
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"fmt"
+)
 
 type WindowAcknowledgeSizeMessage struct {
 	MessageBase
 	AcknowledgementWindowSize uint32
 }
 
-func NewWindowAcknowledgeSizeMessage(rtmp *RTMP, windowSize uint32) (wasm *WindowAcknowledgeSizeMessage) {
-	return &WindowAcknowledgeSizeMessage{
-		MessageBase: MessageBase{
-			rtmp: rtmp,
-		},
-		AcknowledgementWindowSize: windowSize,
+func NewWindowAcknowledgeSizeMessage(mb MessageBase, fields ...interface{} /*windowSize int*/) (wasm *WindowAcknowledgeSizeMessage) {
+	wasm = &WindowAcknowledgeSizeMessage{
+		MessageBase: mb,
 	}
+	if len(fields) == 1 {
+		var ok bool
+		if wasm.AcknowledgementWindowSize, ok = fields[0].(uint32); !ok {
+			wasm.AcknowledgementWindowSize = 0
+		}
+	}
+	return wasm
+}
+
+func (wasm *WindowAcknowledgeSizeMessage) Send() (err error) {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, uint32(wasm.AcknowledgementWindowSize))
+	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, FMT0, b).Send(wasm.rtmp)
+}
+
+func (wasm *WindowAcknowledgeSizeMessage) Parse() (err error) {
+	wasm.AcknowledgementWindowSize = binary.BigEndian.Uint32(wasm.messagePayload)
+	fmt.Println("windowAcknowledgeSize:", wasm.AcknowledgementWindowSize)
+	return nil
 }
 
 func (wasm *WindowAcknowledgeSizeMessage) Do() (err error) {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, wasm.AcknowledgementWindowSize)
-	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, FMT0, b).Send(wasm.rtmp)
+	return nil
 }
+
+type LimitType uint8
+
+const (
+	HARD    LimitType = 0
+	SOFT    LimitType = 1
+	DYNAMIC LimitType = 2
+)
 
 type SetPeerBandWidthMessage struct {
 	MessageBase
 	AcknowledgementWindowSize uint32
-	LimitType                 uint8
+	LimitType                 LimitType
 }
 
-func NewSetPeerBandWidthMessage(rtmp *RTMP, windowSize uint32, limitType uint8) (spbwm *SetPeerBandWidthMessage) {
-	return &SetPeerBandWidthMessage{
-		MessageBase: MessageBase{
-			rtmp: rtmp,
-		},
-		AcknowledgementWindowSize: windowSize,
-		LimitType:                 limitType,
+func NewSetPeerBandWidthMessage(mb MessageBase, fields ...interface{} /*windowSize int, limitType uint8*/) (spbwm *SetPeerBandWidthMessage) {
+	spbwm = &SetPeerBandWidthMessage{
+		MessageBase: mb,
 	}
+	if len(fields) == 2 {
+		var ok bool
+		if spbwm.AcknowledgementWindowSize, ok = fields[0].(uint32); !ok {
+			spbwm.AcknowledgementWindowSize = 0
+		}
+		if spbwm.LimitType, ok = fields[1].(LimitType); !ok {
+			spbwm.LimitType = 0
+		}
+	}
+	return spbwm
 }
 
-func (spbwm *SetPeerBandWidthMessage) Do() (err error) {
+func (spbwm *SetPeerBandWidthMessage) Send() (err error) {
 	b := make([]byte, 5)
 	binary.BigEndian.PutUint32(b, spbwm.AcknowledgementWindowSize)
 	b[4] = byte(spbwm.LimitType)
 	return NewChunk(SET_PEER_BANDWIDTH, FMT0, b).Send(spbwm.rtmp)
+}
+
+func (spbwm *SetPeerBandWidthMessage) Parse() (err error) {
+	_ = spbwm.messagePayload[4]
+	spbwm.AcknowledgementWindowSize = binary.BigEndian.Uint32(spbwm.messagePayload[:4])
+	spbwm.LimitType = LimitType(spbwm.messagePayload[4])
+	fmt.Println("peerBandWidth:", spbwm.AcknowledgementWindowSize)
+	fmt.Println("limitType:", spbwm.LimitType)
+	return nil
+}
+
+func (spbwm *SetPeerBandWidthMessage) Do() (err error) {
+	//TODO
+	return nil
 }
 
 type EventType uint16
@@ -64,16 +109,27 @@ type UserControlMessage struct {
 	EventData []byte
 }
 
-func NewUserControlMessage(rtmp *RTMP, eventType EventType) (ucm *UserControlMessage) {
-	return &UserControlMessage{
-		MessageBase: MessageBase{
-			rtmp: rtmp,
-		},
-		EventType: eventType,
+func NewUserControlMessage(mb MessageBase, fields ...interface{} /*eventType EventType*/) (ucm *UserControlMessage) {
+	ucm = &UserControlMessage{
+		MessageBase: mb,
+		// EventType:   eventType,
 	}
+	var ok bool
+	switch len(fields) {
+	case 2:
+		if ucm.EventData, ok = fields[1].([]byte); !ok {
+			ucm.EventData = []byte{}
+		}
+		fallthrough
+	case 1:
+		if ucm.EventType, ok = fields[0].(EventType); !ok {
+			ucm.EventType = StreamEOF
+		}
+	}
+	return ucm
 }
 
-func (ucm *UserControlMessage) Do() (err error) {
+func (ucm *UserControlMessage) Send() (err error) {
 	var b []byte
 	switch ucm.EventType {
 	case StreamBegin:
@@ -91,81 +147,111 @@ func (ucm *UserControlMessage) Do() (err error) {
 	return nil
 }
 
-// type SetChunkSizeMessage struct {
-// MessageBase
-// MessageHeader
-// NewChunkSize uint32
-// }
+func (ucm *UserControlMessage) Parse() (err error) {
+	//TODO
+	return nil
+}
 
-// func newSetChunkSizeMessage(rtmp *RTMP, chunk *Chunk) (scsm *SetChunkSizeMessage, err error) {
-// scsm = &SetChunkSizeMessage{
-// MessageBase: MessageBase{
-// rtmp: rtmp,
-// },
-// MessageHeader: MessageHeader{
-// // MessageType:
-// // PayloadLength:
-// // TimeStamp:
-// // MessageStreamID:
-// },
-// // NewChunkSize:
-// }
-// }
+func (ucm *UserControlMessage) Do() (err error) {
+	//TODO
+	return nil
+}
 
-// func (mscs *SetChunkSizeMessage) Combine(chunk *Chunk) error {
-// }
+type SetChunkSizeMessage struct {
+	MessageBase
+	NewChunkSize int
+}
 
-// func (mscs *SetChunkSizeMessage) Do() error {
-// //TODO
-// return nil
-// }
+func NewSetChunkSizeMessage(mb MessageBase, fields ...interface{} /*NewChunkSize int*/) (scsm *SetChunkSizeMessage) {
+	scsm = &SetChunkSizeMessage{
+		MessageBase: mb,
+	}
+	var ok bool
+	if len(fields) == 1 {
+		if scsm.NewChunkSize, ok = fields[0].(int); !ok {
+			scsm.NewChunkSize = 128
+		}
+	}
+	return scsm
+}
 
-// type MessageAbort struct {
-// MessageHeader
-// ChunkStreamID uint32
-// }
+func (scsm *SetChunkSizeMessage) Send() error {
+	//TODO
+	return nil
+}
 
-// func (ma *MessageAbort) Do() error {
-// //TODO
-// return nil
-// }
+func (scsm *SetChunkSizeMessage) Parse() (err error) {
+	//TODO
+	return nil
+}
 
-// type MessageAcknowledgement struct {
-// MessageHeader
-// SequenceNumber uint32
-// }
+func (scsm *SetChunkSizeMessage) Do() error {
+	//TODO
+	return nil
+}
 
-// func (ma *MessageAcknowledgement) Do() error {
-// //TODO
-// return nil
-// }
+type AbortMessage struct {
+	MessageBase
+	ChunkStreamID int
+}
 
-// type MessageUserControl struct {
-// MessageHeader
-// EventType uint16
-// EventData []byte
-// }
+func NewAbortMessage(mb MessageBase, fields ...interface{} /*ChunkStreamID int*/) (am *AbortMessage) {
+	am = &AbortMessage{
+		MessageBase: mb,
+	}
+	var ok bool
+	if len(fields) == 1 {
+		if am.ChunkStreamID, ok = fields[0].(int); !ok {
+			am.ChunkStreamID = 0
+		}
+	}
+	return am
+}
 
-// func (muc *MessageUserControl) Do() error {
-// //TODO
-// return nil
-// }
+func (scsm *AbortMessage) Send() error {
+	//TODO
+	return nil
+}
 
-// type LimitType uint8
+func (scsm *AbortMessage) Parse() (err error) {
+	//TODO
+	return nil
+}
 
-// const (
-// HARD    LimitType = 0
-// SOFT    LimitType = 1
-// DYNAMIC LimitType = 2
-// )
+func (scsm *AbortMessage) Do() error {
+	//TODO
+	return nil
+}
 
-// type MessageSetPeerBandwidth struct {
-// MessageHeader
-// AcknowledgementWindowSize uint32
-// LimitType                 LimitType
-// }
+type AcknowledgeMessage struct {
+	MessageBase
+	SequenceNumber int
+}
 
-// func (mspb *MessageSetPeerBandwidth) Do() error {
-// //TODO
-// return nil
-// }
+func NewAcknowledgeMessage(mb MessageBase, fields ...interface{} /*ChunkStreamID int*/) (am *AcknowledgeMessage) {
+	am = &AcknowledgeMessage{
+		MessageBase: mb,
+	}
+	var ok bool
+	if len(fields) == 1 {
+		if am.SequenceNumber, ok = fields[0].(int); !ok {
+			am.SequenceNumber = 0
+		}
+	}
+	return am
+}
+
+func (scsm *AcknowledgeMessage) Send() error {
+	//TODO
+	return nil
+}
+
+func (scsm *AcknowledgeMessage) Parse() (err error) {
+	//TODO
+	return nil
+}
+
+func (scsm *AcknowledgeMessage) Do() error {
+	//TODO
+	return nil
+}

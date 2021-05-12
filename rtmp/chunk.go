@@ -133,8 +133,8 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 	}
 
 	chunkSize := messageHeader.MessageLength
-	if chunkSize > rtmp.maxChunkSize {
-		chunkSize = rtmp.maxChunkSize
+	if chunkSize > rtmp.peerMaxChunkSize {
+		chunkSize = rtmp.peerMaxChunkSize
 	}
 	if message != nil {
 		if remain := message.Done(); chunkSize > remain {
@@ -155,7 +155,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 	return cp, nil
 }
 
-//NOTE: ensure len(payload) <= maxChunkSize
+//NOTE: ensure len(payload) <= peerMaxChunkSize
 func NewChunk(messageType MessageType, fmt MessageHeaderType, payload []byte) (chunk *Chunk) {
 	return &Chunk{
 		ChunkBasicHeader: ChunkBasicHeader{

@@ -2,7 +2,9 @@ package rtmp
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -17,6 +19,14 @@ const (
 	S0_LEN = 1
 	S1_LEN = 1536
 	S2_LEN = 1536
+)
+
+type HandshakeMode int
+
+const (
+	SIMPLE   HandshakeMode = 0
+	COMPLEX1 HandshakeMode = 1
+	COMPLEX2 HandshakeMode = 2
 )
 
 // type client struct{}
@@ -48,18 +58,21 @@ var (
 )
 
 type Server struct {
-	//simple handshake
-	clientVersion   uint8
-	serverVersion   uint8
+	handshakeMode HandshakeMode
+
+	//c0 s0
+	clientVersion uint8
+	serverVersion uint8
+	//simple handshake c1 s1
 	clientTimeStamp uint32
 	serverTimeStamp uint32
 	clientZero      uint32
 	serverZero      uint32
-
+	//simple handshake c2 s2
 	clientRandom []byte
 	serverRandom []byte
 
-	//complex handshake
+	//complex handshake c1 s1
 	clientDigest []byte //32byte
 	serverDigest []byte //32byte
 	clientKey    []byte //128byte
@@ -73,17 +86,52 @@ func NewServer() (server *Server) {
 }
 
 func (s *Server) parseC0(c0 []byte) {
-	if len(c0) == C0_LEN {
-		s.clientVersion = uint8(c0[0])
-	}
+	s.clientVersion = uint8(c0[0])
 }
 
 func (s *Server) parseC1(c1 []byte) {
-	if len(c1) == C1_LEN {
-		s.clientTimeStamp = binary.BigEndian.Uint32(c1[:4])
-		s.clientZero = binary.BigEndian.Uint32(c1[4:8])
-		s.clientRandom = c1[8:]
+	//try complex handshake first
+
+	//key-digest
+	keyBufOffset := uint32(8)
+	digestBufOffset := uint32(8 + 764)
+	s.handshakeMode = COMPLEX1
+
+	try := 0
+complex:
+	keyOffset := binary.BigEndian.Uint32(c1[keyBufOffset+760 : keyBufOffset+764])
+	digestOffset := binary.BigEndian.Uint32(c1[digestBufOffset:digestBufOffset:4])
+
+	s.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
+	s.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+32]
+
+	joined := append([]byte{}, c1[:digestBufOffset+4+digestOffset]...)
+	joined = append(joined, c1[digestBufOffset+4+digestOffset+32:]...)
+
+	mac := hmac.New(sha256.New, FPkey[:30])
+	mac.Write(joined)
+	newDigest := mac.Sum(nil)
+
+	if bytes.Compare(newDigest, s.clientDigest) == 0 {
+		fmt.Println("complex handshake success.")
+		return
+	} else {
+		if try == 0 {
+			digestBufOffset = uint32(8)
+			keyBufOffset = uint32(8 + 764)
+			s.handshakeMode = COMPLEX2
+			goto complex
+		} else {
+			fmt.Println("complex handshake fail, using simple handshake")
+			goto simple
+		}
 	}
+
+simple:
+	s.handshakeMode = SIMPLE
+	s.clientTimeStamp = binary.BigEndian.Uint32(c1[:4])
+	s.clientZero = binary.BigEndian.Uint32(c1[4:8])
+	s.clientRandom = c1[8:]
 }
 func (s *Server) parseC2(c2 []byte) {
 	//TODO
@@ -101,9 +149,19 @@ func (s *Server) makeS1() (s1 []byte) {
 	_, _ = rand.Read(s.serverRandom)
 	b := bytes.NewBuffer(s1)
 	binary.Write(b, binary.BigEndian, s.serverTimeStamp)
-	_, _ = b.Write([]byte{0, 0, 0, 0})
-	_, _ = b.Write(s.serverRandom)
-	return b.Bytes()
+
+	switch s.handshakeMode {
+	case SIMPLE:
+		_, _ = b.Write([]byte{0, 0, 0, 0})
+		_, _ = b.Write(s.serverRandom)
+		return b.Bytes()
+	case COMPLEX1:
+		_, _ = b.Write([]byte{0x04, 0x05, 0x00, 0x01})
+	case COMPLEX2:
+		_, _ = b.Write([]byte{0x04, 0x05, 0x00, 0x01})
+	default:
+	}
+	return nil
 }
 
 func (s *Server) makeS2() (s2 []byte) {
@@ -113,30 +171,6 @@ func (s *Server) makeS2() (s2 []byte) {
 	binary.Write(b, binary.BigEndian, s.clientRandom)
 	return b.Bytes()
 }
-
-// func (rtmp *RTMP) parseC1Complex(c1 []byte) {
-// if len(c1) == C1_LEN {
-// //digest-key
-// digest := c1[:764]
-// key := c1[764:]
-
-// digestOffset := binary.BigEndian.Uint32(digest[:4])
-// keyOffset := binary.BigEndian.Uint32(key[760:])
-
-// rtmp.clientDigest = digest[4+digestOffset : 4+digestOffset+32]
-// rtmp.clientKey = key[keyOffset : keyOffset+128]
-
-// clientDigestRandomJoined := append(c1[:4+digestOffset], c1[4+digestOffset+32:]...)
-
-// mac := hmac.New(sha256.New, FPKey)
-// mac.Write()
-
-// //TODO:key-digest
-// }
-// }
-
-// func (rtmp *RTMP) makeS1Complex() (s1 []byte) {
-// }
 
 func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	c0c1c2 := [C0_LEN + C1_LEN + C2_LEN]byte{}
@@ -163,39 +197,32 @@ func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	s0 := s.makeS0()
 	fmt.Printf("s0:%x\n", s0)
 
-	if binary.BigEndian.Uint32(c1[4:8]) == 0x0 {
-		s.parseC1(c1)
+	s.parseC1(c1)
 
-		err = rtmp.conn.WriteFull(s0)
-		if err != nil {
-			return errors.Wrap(err, "write s0 to conn")
-		}
-
-		s1 := s.makeS1()
-		fmt.Printf("s1:%x\n", s1)
-		err = rtmp.conn.WriteFull(s1)
-		if err != nil {
-			return errors.Wrap(err, "write s1 to conn")
-		}
-
-		err = rtmp.conn.ReadFull(c2)
-		if err != nil {
-			return errors.Wrap(err, "read c2 from conn")
-		}
-		fmt.Printf("c2:%x\n", c2)
-		s.parseC2(c2)
-
-		s2 := s.makeS2()
-		err = rtmp.conn.WriteFull(s2)
-		if err != nil {
-			return errors.Wrap(err, "write s2 to conn")
-		}
-		fmt.Printf("s2:%x\n", s2)
-	} else {
-		//complex handshake: https://blog.csdn.net/win_lin/article/details/13006803
-		// rtmp.parseC1Complex(c1)
-
-		// rtmp.makeS1()
+	err = rtmp.conn.WriteFull(s0)
+	if err != nil {
+		return errors.Wrap(err, "write s0 to conn")
 	}
+
+	s1 := s.makeS1()
+	fmt.Printf("s1:%x\n", s1)
+	err = rtmp.conn.WriteFull(s1)
+	if err != nil {
+		return errors.Wrap(err, "write s1 to conn")
+	}
+
+	err = rtmp.conn.ReadFull(c2)
+	if err != nil {
+		return errors.Wrap(err, "read c2 from conn")
+	}
+	fmt.Printf("c2:%x\n", c2)
+	s.parseC2(c2)
+
+	s2 := s.makeS2()
+	err = rtmp.conn.WriteFull(s2)
+	if err != nil {
+		return errors.Wrap(err, "write s2 to conn")
+	}
+	fmt.Printf("s2:%x\n", s2)
 	return nil
 }

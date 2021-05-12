@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"time"
 
-	// "fmt"
-
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/SmartBrave/utils/easyio"
 )
@@ -47,7 +45,6 @@ func (amf0) Decode(r easyio.EasyReader) (res []interface{}, err error) {
 	var marker Marker
 	for {
 		marker, i, err = decodeamf0(r)
-		fmt.Println("-------------err:", err)
 		if err == io.EOF {
 			break
 		}
@@ -119,7 +116,7 @@ func decodeamf0(r easyio.EasyReader) (marker Marker, i interface{}, err error) {
 	default:
 		return InvalidMarker, i, errors.New("invalid amf0 marker")
 	}
-	fmt.Printf("marker:%x, value:%+v\n", marker, i)
+	// fmt.Printf("marker:%x, value:%+v\n", marker, i)
 	return marker, i, err
 }
 

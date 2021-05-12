@@ -18,10 +18,19 @@ const (
 	CONNECT        = "connect"
 	RELEASE_STREAM = "releaseStream"
 	FCPUBLISH      = "FCPublish"
+	FCUNPUBLISH    = "FCUnpublish"
 	CALL           = "call"
 	CLOSE          = "close"
 	CREATE_STREAM  = "createStream"
 	PUBLISH        = "publish"
+	PLAY           = "play"
+	PLAY2          = "play2"
+	DELETE_STREAM  = "deleteStream"
+	CLOSE_STREAM   = "closeStream"
+	RECEIVE_AUDIO  = "receiveAudio"
+	RECEIVE_VIDEO  = "receiveVideo"
+	SEEK           = "seek"
+	PAUSE          = "pause"
 
 	_RESULT   = "_result"
 	_ERROR    = "_error"
@@ -40,6 +49,7 @@ type ConnectReqCommandObject struct {
 	PageURL        string        `mapstructure:"pageUrl"`
 	ObjectEncoding float64       `mapstructure:"objectEncoding"`
 	Type           string        `mapstructure:"type"`
+	Capabilities   float64       `mapstructure:"capabilities"`
 }
 
 type CommandMessage struct {
@@ -52,7 +62,33 @@ type CommandMessage struct {
 	//TODO:record: The stream is published and the data is recorded to a new file. The file is stored on the server in a subdirectory within the directory that contains the server application. If the file already exists, it is overwritten.
 	//TODO:append: The stream is published and the data is appended to a file. If no file is found, it is created.
 	//live: Live data is published without recording it in a file.
-	PublishingType string //publish
+	PublishingType string  //publish
+	StreamName     string  //play
+	Start          float64 //play
+	Duration       float64 //play
+	Reset          bool    //play
+}
+
+func NewCommandMessage(mb MessageBase, fields ...interface{} /*commandName string, transcationID int, others*/) (cm *CommandMessage) {
+	cm = &CommandMessage{
+		MessageBase: mb,
+	}
+	if len(fields) >= 2 {
+		var ok bool
+		if cm.CommandName, ok = fields[0].(string); !ok {
+			cm.CommandName = ""
+		}
+		if cm.TranscationID, ok = fields[1].(int); !ok {
+			cm.TranscationID = 0
+		}
+		//TODO: others
+	}
+	return cm
+}
+
+func (cm *CommandMessage) Send() (err error) {
+	//TODO
+	return nil
 }
 
 func (cm *CommandMessage) Parse() (err error) {
@@ -73,46 +109,45 @@ func (cm *CommandMessage) Parse() (err error) {
 	cm.TranscationID = int(array[1].(float64))
 	switch cm.CommandName {
 	case CONNECT:
+		_ = array[2]
 		err = mapstructure.Decode(array[2], &cm.CommandObject)
 		if err != nil {
 			return errors.Wrap(err, "mapstructure.Decode")
 		}
 	case RELEASE_STREAM, FCPUBLISH: //ignore
+		_ = array[3]
 		cm.PublishingName = array[3].(string)
+	case FCUNPUBLISH:
+	case DELETE_STREAM:
 	case CREATE_STREAM: //do nothing
 	case PUBLISH:
+		_ = array[4]
 		cm.PublishingName = array[3].(string)
 		cm.PublishingType = array[4].(string)
+	case PLAY:
+		cm.PublishingName = array[3].(string)
 	}
 	return nil
 }
 
-// func (cm *CommandMessage) Update(chunk *Chunk) error {
-// newCm, err := parseCommandMessage(cm.rtmp, chunk)
-// if err != nil {
-// return err
-// }
-// cm.CommandName = newCm.CommandName
-// cm.TranscationID = newCm.TranscationID
-// cm.CommandObject = newCm.CommandObject
-// return nil
-// }
-
 func (cm *CommandMessage) Do() (err error) {
 	switch cm.CommandName {
 	case CONNECT:
-		err1 := NewWindowAcknowledgeSizeMessage(cm.rtmp, 2500000).Do()
-		err2 := NewSetPeerBandWidthMessage(cm.rtmp, 2500000, 0x02).Do()
-		err3 := NewUserControlMessage(cm.rtmp, StreamBegin).Do()
-		err4 := NewCommandMessageResponse(cm.rtmp, cm.CommandName, _RESULT, cm.TranscationID, 0).Do()
+		err1 := NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
+		err2 := NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
+		//XXX: can set peer chunk size here
+		err3 := NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
+		err4 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, 0).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	case RELEASE_STREAM, FCPUBLISH: //ignore
 	case CALL:
 	case CLOSE:
 	case CREATE_STREAM:
-		err = NewCommandMessageResponse(cm.rtmp, cm.CommandName, _RESULT, cm.TranscationID, cm.messageStreamID).Do()
+		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, cm.messageStreamID).Send()
 	case PUBLISH:
-		err = NewCommandMessageResponse(cm.rtmp, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Do()
+		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
+	case PLAY:
+		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
 	case _RESULT:
 	case _ERROR:
 	default:
@@ -126,6 +161,7 @@ type ConnectRespCommandObject struct {
 	Level          string  `structs:"level,omitempty"`
 	Code           string  `structs:"code,omitempty"`
 	Description    string  `structs:"description,omitempty"`
+	Capabilities   float64 `structs:"capabilities,omitempty"`
 	ObjectEncoding float64 `structs:"object_encoding,omitempty"`
 }
 
@@ -138,11 +174,9 @@ type CommandMessageResponse struct {
 	StreamID        uint32
 }
 
-func NewCommandMessageResponse(rtmp *RTMP, commandName, commandRespName string, transcationID int, streamID uint32) (cm *CommandMessageResponse) {
+func NewCommandMessageResponse(mb MessageBase, commandName, commandRespName string, transcationID int, streamID uint32) (cm *CommandMessageResponse) {
 	cmr := &CommandMessageResponse{
-		MessageBase: MessageBase{
-			rtmp: rtmp,
-		},
+		MessageBase:     mb,
 		CommandName:     commandName,
 		CommandRespName: commandRespName,
 		TranscationID:   transcationID,
@@ -151,18 +185,31 @@ func NewCommandMessageResponse(rtmp *RTMP, commandName, commandRespName string, 
 	switch commandName {
 	case CONNECT:
 		cmr.CommandObject.FmsVer = "FMS/3,0,1,123"
+		// cmr.CommandObject.Capabilities=31
+		// cmr.CommandObject.Level = "status"
+		// cmr.CommandObject.Code = "NetConnection.Connect.Success"
+		// cmr.CommandObject.Description = "Connection succeeded"
+		// cmr.CommandObject.ObjectEncoding = 0
 	case CREATE_STREAM:
 		cmr.StreamID = streamID
 	case PUBLISH:
 		cmr.CommandObject.Level = "status"
 		cmr.CommandObject.Code = "NetStream.Publish.Start"
-		cmr.CommandObject.Description = "publishing"
+		cmr.CommandObject.Description = "Start publishing"
+	case PLAY:
+		cmr.CommandObject.Level = "status"
+		cmr.CommandObject.Code = "NetStream.Play.Start"
+		cmr.CommandObject.Description = "Start play"
 	default: //do nothing
 	}
 	return cmr
 }
 
-func (cmr *CommandMessageResponse) Do() (err error) {
+// func (cmr *CommandMessageResponse) Do() error {
+// return nil
+// }
+
+func (cmr *CommandMessageResponse) Send() (err error) {
 	buf := bytes.NewBuffer([]byte{})
 	writer := easyio.NewEasyWriter(buf)
 	amf := amf_pkg.AMF0
@@ -179,6 +226,7 @@ func (cmr *CommandMessageResponse) Do() (err error) {
 	case PUBLISH:
 		err3 = amf.Encode(writer, nil)
 		err4 = amf.Encode(writer, structs.Map(cmr.CommandObject))
+	case PLAY:
 	}
 	err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	if err != nil {
@@ -191,5 +239,6 @@ func (cmr *CommandMessageResponse) Do() (err error) {
 	if err != nil {
 		return err
 	}
+	//TODO: split message in multi chunk
 	return NewChunk(COMMAND_MESSAGE_AMF0, FMT0, b).Send(cmr.rtmp)
 }

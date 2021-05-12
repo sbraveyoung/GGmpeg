@@ -19,3 +19,26 @@ type VideoFunction float64
 const (
 	SUPPORT_VID_CLIENT_SEEK VideoFunction = 1
 )
+
+type VideoMessage struct {
+	MessageBase
+}
+
+func NewVideoMessage(mb MessageBase) (am *VideoMessage) {
+	return &VideoMessage{
+		MessageBase: mb,
+	}
+}
+
+func (am *VideoMessage) Send() (err error) {
+	//TODO
+	return nil
+}
+
+func (am *VideoMessage) Parse() (err error) {
+	return nil
+}
+
+func (am *VideoMessage) Do() (err error) {
+	return nil
+}

@@ -1,8 +1,6 @@
 package rtmp
 
 import (
-	"fmt"
-
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
@@ -33,7 +31,7 @@ func (mb *MessageBase) Append(chunk *Chunk) {
 }
 
 func (mb *MessageBase) Done() int {
-	fmt.Printf("done? messageLength:%d, len(payload):%d\n", mb.messageLength, len(mb.messagePayload))
+	// fmt.Printf("done? messageLength:%d, len(payload):%d\n", mb.messageLength, len(mb.messagePayload))
 	return mb.messageLength - len(mb.messagePayload)
 }
 
@@ -43,8 +41,12 @@ type Message interface {
 	GetInfo() *MessageBase
 	Update(*MessageBase)
 
+	//Parse() parse binary data that receive from peer
 	Parse() error
+	//when receive the message, Do() operator fields in RTMP belongs to this message, and send response to peer
 	Do() error
+	//Send() post the message to peer which generated from NewXXX()
+	Send() error
 }
 
 // type MessageHeader struct {
@@ -103,7 +105,6 @@ const (
 func ParseMessage(rtmp *RTMP) (err error) {
 	var chunk *Chunk
 	var message Message
-	// var ok bool
 
 	//read message payload from many chunks
 	for {
@@ -112,8 +113,6 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			return err
 		}
 
-		// message, ok = rtmp.message[chunk.MessageStreamID]
-		// if !ok {
 		if message == nil {
 			mb := MessageBase{
 				rtmp:        rtmp,
@@ -131,20 +130,23 @@ func ParseMessage(rtmp *RTMP) (err error) {
 				// return newSetChunkSizeMessage(rtmp, chunk)
 			case ABORT_MESSAGE:
 			case ACKNOWLEDGEMENT:
+				message = NewAcknowledgeMessage(mb)
 			case USER_CONTROL_MESSAGE:
+				message = NewUserControlMessage(mb)
 			case WINDOW_ACKNOWLEDGEMENT_SIZE:
+				message = NewWindowAcknowledgeSizeMessage(mb)
 			case SET_PEER_BANDWIDTH:
 
 			case AUDIO_MESSAGE:
+				message = NewAudioMessage(mb)
 			case VIDEO_MESSAGE:
+				message = NewVideoMessage(mb)
 
 			case DATA_MESSAGE_AMF3:
 				// mb.amf = amf_pkg.AMF3
 				fallthrough
 			case DATA_MESSAGE_AMF0:
-				message = &DataMessage{
-					MessageBase: mb,
-				}
+				message = NewDataMessage(mb)
 			case SHARE_OBJECT_MESSAGE_AMF3:
 				// mb.amf = amf_pkg.AMF3
 				fallthrough
@@ -153,29 +155,22 @@ func ParseMessage(rtmp *RTMP) (err error) {
 				// mb.amf = amf_pkg.AMF3
 				fallthrough
 			case COMMAND_MESSAGE_AMF0:
-				// message, err = parseCommandMessage(rtmp, chunk)
-				message = &CommandMessage{
-					MessageBase: mb,
-				}
+				message = NewCommandMessage(mb)
 			default:
 				return errors.New("invalid message type")
 			}
 		}
-		// } else {
 		// mb := message.GetInfo()
 		// switch chunk.Fmt {
 		// case FMT1, FMT2:
 		// mb.messageTimeDelta = chunk.MessageTimeStamp
 		// message.Update(mb)
-		// rtmp.message[mb.messageStreamID] = message
 		// case FMT3: //do nothing
 		// default:
 		// return errors.New("invalid chunk format")
 		// }
-		// }
 
 		message.Append(chunk)
-		// rtmp.message[chunk.MessageStreamID] = message
 		if message.Done() == 0 {
 			break
 		}

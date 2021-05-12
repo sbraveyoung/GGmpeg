@@ -17,3 +17,26 @@ const (
 	SUPPORT_SND_SPEEX
 	SUPPORT_SND_ALL = 0x0fff
 )
+
+type AudioMessage struct {
+	MessageBase
+}
+
+func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
+	return &AudioMessage{
+		MessageBase: mb,
+	}
+}
+
+func (am *AudioMessage) Send() (err error) {
+	//TODO
+	return nil
+}
+
+func (am *AudioMessage) Parse() (err error) {
+	return nil
+}
+
+func (am *AudioMessage) Do() (err error) {
+	return nil
+}
