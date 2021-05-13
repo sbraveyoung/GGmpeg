@@ -93,33 +93,48 @@ func (s *Server) parseC1(c1 []byte) {
 	//try complex handshake first
 
 	//key-digest
-	keyBufOffset := uint32(8)
-	digestBufOffset := uint32(8 + 764)
+	// keyBufOffset := 8
+	digestBufOffset := 8 + 764
 	s.handshakeMode = COMPLEX1
 
 	try := 0
 complex:
-	keyOffset := binary.BigEndian.Uint32(c1[keyBufOffset+760 : keyBufOffset+764])
-	digestOffset := binary.BigEndian.Uint32(c1[digestBufOffset:digestBufOffset:4])
+	// fmt.Println("keyBufOffset:", keyBufOffset)
+	// fmt.Println("digestBufOffset:", digestBufOffset)
 
-	s.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
+	// keyOffset := (int(c1[keyBufOffset+760]) + int(c1[keyBufOffset+761]) + int(c1[keyBufOffset+762]) + int(c1[keyBufOffset+763]))
+	//XXX: what's mean about 728?
+	digestOffset := (int(c1[digestBufOffset]) + int(c1[digestBufOffset+1]) + int(c1[digestBufOffset+2]) + int(c1[digestBufOffset+3])) % 728
+
+	// fmt.Println("keyOffset:", keyOffset)
+	// fmt.Println("digestOffset:", digestOffset)
+
+	// s.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
 	s.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+32]
 
 	joined := append([]byte{}, c1[:digestBufOffset+4+digestOffset]...)
 	joined = append(joined, c1[digestBufOffset+4+digestOffset+32:]...)
 
+	// fmt.Printf("joined:%x\n", joined)
+	// fmt.Printf("client key:%x\n", FPkey[:30])
+
 	mac := hmac.New(sha256.New, FPkey[:30])
 	mac.Write(joined)
 	newDigest := mac.Sum(nil)
+
+	// fmt.Printf("newDigest, len:%d, data:%x\n", len(newDigest), newDigest)
+	// fmt.Printf("clientDigest, len:%d, data:%x\n", len(s.clientDigest), s.clientDigest)
 
 	if bytes.Compare(newDigest, s.clientDigest) == 0 {
 		fmt.Println("complex handshake success.")
 		return
 	} else {
 		if try == 0 {
-			digestBufOffset = uint32(8)
-			keyBufOffset = uint32(8 + 764)
+			fmt.Println("complex handshake mode 1 fail, try mode 2")
+			digestBufOffset = 8
+			// keyBufOffset = 8 + 764
 			s.handshakeMode = COMPLEX2
+			try++
 			goto complex
 		} else {
 			fmt.Println("complex handshake fail, using simple handshake")
@@ -145,31 +160,61 @@ func (s *Server) makeS0() (s0 []byte) {
 
 func (s *Server) makeS1() (s1 []byte) {
 	s.serverTimeStamp = uint32(time.Now().Unix())
-	s.serverRandom = make([]byte, S1_LEN-8)
-	_, _ = rand.Read(s.serverRandom)
-	b := bytes.NewBuffer(s1)
-	binary.Write(b, binary.BigEndian, s.serverTimeStamp)
+	s1 = make([]byte, S1_LEN)
+	_, _ = rand.Read(s1[8:])
+	binary.BigEndian.PutUint32(s1[0:4], s.serverTimeStamp)
 
+	digestBufOffset := 8
 	switch s.handshakeMode {
 	case SIMPLE:
-		_, _ = b.Write([]byte{0, 0, 0, 0})
-		_, _ = b.Write(s.serverRandom)
-		return b.Bytes()
+		copy(s1[4:8], []byte{0x0, 0x0, 0x0, 0x0})
+		s.serverRandom = s1[8:]
 	case COMPLEX1:
-		_, _ = b.Write([]byte{0x04, 0x05, 0x00, 0x01})
+		digestBufOffset = 8 + 764
+		fallthrough
 	case COMPLEX2:
-		_, _ = b.Write([]byte{0x04, 0x05, 0x00, 0x01})
+		copy(s1[4:8], []byte{0x04, 0x05, 0x00, 0x01})
+
+		digestOffset := (int(s1[digestBufOffset]) + int(s1[digestBufOffset+1]) + int(s1[digestBufOffset+2]) + int(s1[digestBufOffset+3])) % 728
+		fmt.Println("digestOffset:", digestOffset)
+
+		joined := append([]byte{}, s1[:digestBufOffset+4+digestOffset]...)
+		joined = append(joined, s1[digestBufOffset+4+digestOffset+32:]...)
+		fmt.Printf("joined:%x\n", joined)
+
+		mac := hmac.New(sha256.New, FMSKey[:36])
+		mac.Write(joined)
+		digest := mac.Sum(nil)
+		fmt.Printf("digest:%x\n", digest)
+		copy(s1[digestBufOffset+4+digestOffset:digestBufOffset+4+digestOffset+32], digest)
 	default:
 	}
-	return nil
+	return s1
 }
 
 func (s *Server) makeS2() (s2 []byte) {
-	b := bytes.NewBuffer(s2)
-	binary.Write(b, binary.BigEndian, s.clientTimeStamp)
-	binary.Write(b, binary.BigEndian, s.clientZero)
-	binary.Write(b, binary.BigEndian, s.clientRandom)
-	return b.Bytes()
+	switch s.handshakeMode {
+	case SIMPLE:
+		b := bytes.NewBuffer(s2)
+		binary.Write(b, binary.BigEndian, s.clientTimeStamp)
+		binary.Write(b, binary.BigEndian, s.clientZero)
+		binary.Write(b, binary.BigEndian, s.clientRandom)
+		return b.Bytes()
+	case COMPLEX1, COMPLEX2:
+		s2 = make([]byte, S2_LEN)
+		_, _ = rand.Read(s2)
+
+		mac := hmac.New(sha256.New, FMSKey)
+		mac.Write(s.clientDigest)
+		tmpDigest := mac.Sum(nil)
+
+		mac = hmac.New(sha256.New, tmpDigest)
+		mac.Write(s2[:S2_LEN-32])
+		s2Digest := mac.Sum(nil)
+		copy(s2[S2_LEN-32:S2_LEN], s2Digest)
+	default:
+	}
+	return
 }
 
 func (s *Server) Handshake(rtmp *RTMP) (err error) {
@@ -192,7 +237,7 @@ func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
-	fmt.Printf("c1:%x\n", c1)
+	fmt.Printf("c1:len:%d, data: %x\n", len(c1), c1)
 
 	s0 := s.makeS0()
 	fmt.Printf("s0:%x\n", s0)
@@ -205,11 +250,18 @@ func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	}
 
 	s1 := s.makeS1()
-	fmt.Printf("s1:%x\n", s1)
+	fmt.Printf("s1:len:%d, data: %x\n", len(s1), s1)
 	err = rtmp.conn.WriteFull(s1)
 	if err != nil {
 		return errors.Wrap(err, "write s1 to conn")
 	}
+
+	s2 := s.makeS2()
+	err = rtmp.conn.WriteFull(s2)
+	if err != nil {
+		return errors.Wrap(err, "write s2 to conn")
+	}
+	fmt.Printf("s2:%x\n", s2)
 
 	err = rtmp.conn.ReadFull(c2)
 	if err != nil {
@@ -218,11 +270,5 @@ func (s *Server) Handshake(rtmp *RTMP) (err error) {
 	fmt.Printf("c2:%x\n", c2)
 	s.parseC2(c2)
 
-	s2 := s.makeS2()
-	err = rtmp.conn.WriteFull(s2)
-	if err != nil {
-		return errors.Wrap(err, "write s2 to conn")
-	}
-	fmt.Printf("s2:%x\n", s2)
 	return nil
 }
