@@ -6,10 +6,40 @@ import (
 	"reflect"
 
 	"github.com/SmartBrave/utils/easyio"
+	"github.com/goinggo/mapstructure"
+	"github.com/pkg/errors"
 )
+
+type MetaData struct {
+	AudioChannels   string  `mapstructure:"audiochannels"`
+	AudioCodecID    int     `mapstructure:"audiocodecid"`
+	AudioDataRate   int     `mapstructure:"audiodatarate"`
+	AudioSampleRate int     `mapstructure:"audiosamplerate"`
+	AudioSampleSize int     `mapstructure:"audiosamplesize"`
+	Author          string  `mapstructure:"author"`
+	Company         string  `mapstructure:"company"`
+	DisplayHeight   string  `mapstructure:"displayheight"`
+	DisplayWidth    string  `mapstructure:"displaywidth"`
+	Duration        int     `mapstructure:"duration"`
+	Encoder         string  `mapstructure:"encoder"`
+	FileSize        int     `mapstructure:"filesize"`
+	Fps             string  `mapstructure:"fps"`
+	FrameRate       int     `mapstructure:"framerate"`
+	Height          int     `mapstructure:"height"`
+	Level           string  `mapstructure:"level"`
+	Profile         string  `mapstructure:"profile"`
+	Stereo          bool    `mapstructure:"stereo"`
+	Version         string  `mapstructure:"version"`
+	VideoCodecID    int     `mapstructure:"videocodecid"`
+	VideoDataRate   float64 `mapstructure:"videodatarate"`
+	Width           int     `mapstructure:"width"`
+}
 
 type DataMessage struct {
 	MessageBase
+	FirstField  string
+	SecondField string
+	MetaData    MetaData
 }
 
 func NewDataMessage(mb MessageBase) (dm *DataMessage) {
@@ -32,6 +62,14 @@ func (dm *DataMessage) Parse() (err error) {
 	for index, a := range array {
 		fmt.Println("index:", index, " a.type:", reflect.TypeOf(a), " a.Value:", reflect.ValueOf(a))
 	}
+
+	dm.FirstField = array[0].(string)
+	dm.SecondField = array[1].(string)
+	err = mapstructure.Decode(array[2], &dm.MetaData)
+	if err != nil {
+		return errors.Wrap(err, "mapstructure.Decode")
+	}
+	fmt.Printf("data message:%+v\n", dm)
 	return nil
 }
 

@@ -131,13 +131,14 @@ func (cm *CommandMessage) Parse() (err error) {
 }
 
 func (cm *CommandMessage) Do() (err error) {
+	var err1, err2, err3, err4 error
 	switch cm.CommandName {
 	case CONNECT:
-		err1 := NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
-		err2 := NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
+		err1 = NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
+		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
 		//XXX: can set peer chunk size here
-		err3 := NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
-		err4 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, 0).Send()
+		err3 = NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
+		err4 = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, 0).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	case RELEASE_STREAM, FCPUBLISH: //ignore
 	case CALL:
@@ -147,7 +148,9 @@ func (cm *CommandMessage) Do() (err error) {
 	case PUBLISH:
 		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
 	case PLAY:
-		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
+		err1 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
+		// err2 := NewDataMessage(cm.MessageBase).Send()
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 	case _RESULT:
 	case _ERROR:
 	default:

@@ -9,9 +9,8 @@ import (
 )
 
 type RTMP struct {
-	conn      easyio.EasyReadWriter
-	lastChunk *Chunk
-	// message      map[uint32]Message //message stream id
+	conn             easyio.EasyReadWriter
+	lastChunk        map[uint32]*Chunk //csid
 	peerMaxChunkSize int
 	ownMaxChunkSize  int
 }
@@ -21,7 +20,7 @@ func NewRTMP(conn net.Conn) (rtmp *RTMP) {
 		conn: rtmpConn{
 			Conn: conn,
 		},
-		// message:      make(map[uint32]Message),
+		lastChunk:        make(map[uint32]*Chunk),
 		peerMaxChunkSize: 128,
 		ownMaxChunkSize:  128,
 	}

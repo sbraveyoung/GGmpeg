@@ -62,13 +62,13 @@ type ChunkMessageHeader struct {
 	MessageStreamID  uint32 //little-endian 4bytes
 }
 
-func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *ChunkMessageHeader, err error) {
-	if messageType != FMT0 && rtmp.lastChunk == nil {
-		return nil, errors.Errorf("invalid fmt_a:%d", messageType)
+func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *ChunkMessageHeader, err error) {
+	if basicHeader.Fmt != FMT0 && rtmp.lastChunk[basicHeader.CsID] == nil {
+		return nil, errors.Errorf("invalid fmt_a:%d", basicHeader.Fmt)
 	}
 
 	cmhp = &ChunkMessageHeader{}
-	switch messageType {
+	switch basicHeader.Fmt {
 	case FMT0:
 		b11, err := rtmp.conn.ReadN(11)
 		if err != nil {
@@ -86,23 +86,23 @@ func parseChunkMessageHeader(rtmp *RTMP, messageType MessageHeaderType) (cmhp *C
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
 		cmhp.MessageLength = int(0x00)<<24 | int(b7[3])<<16 | int(b7[4])<<8 | int(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
-		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
+		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT2:
 		b3, err := rtmp.conn.ReadN(3)
 		if err != nil {
 			return nil, err
 		}
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
-		cmhp.MessageLength = rtmp.lastChunk.MessageLength
-		cmhp.MessageType = rtmp.lastChunk.MessageType
-		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
+		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
+		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
+		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT3:
-		cmhp.MessageTimeStamp = rtmp.lastChunk.MessageTimeStamp
-		cmhp.MessageLength = rtmp.lastChunk.MessageLength
-		cmhp.MessageType = rtmp.lastChunk.MessageType
-		cmhp.MessageStreamID = rtmp.lastChunk.MessageStreamID
+		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
+		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
+		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
+		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	default:
-		return nil, errors.Errorf("invalid fmt_b:%d", messageType)
+		return nil, errors.Errorf("invalid fmt_b:%d", basicHeader.Fmt)
 	}
 	if cmhp.MessageTimeStamp == 0xffffff {
 		b4, err := rtmp.conn.ReadN(4)
@@ -127,7 +127,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		return nil, err
 	}
 
-	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader.Fmt)
+	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		ChunkMessageHeader: *messageHeader,
 		Payload:            b,
 	}
-	rtmp.lastChunk = cp
+	rtmp.lastChunk[cp.CsID] = cp
 	return cp, nil
 }
 

@@ -180,12 +180,12 @@ func (s *Server) makeS1() (s1 []byte) {
 
 		joined := append([]byte{}, s1[:digestBufOffset+4+digestOffset]...)
 		joined = append(joined, s1[digestBufOffset+4+digestOffset+32:]...)
-		fmt.Printf("joined:%x\n", joined)
+		// fmt.Printf("joined:%x\n", joined)
 
 		mac := hmac.New(sha256.New, FMSKey[:36])
 		mac.Write(joined)
 		digest := mac.Sum(nil)
-		fmt.Printf("digest:%x\n", digest)
+		// fmt.Printf("digest:%x\n", digest)
 		copy(s1[digestBufOffset+4+digestOffset:digestBufOffset+4+digestOffset+32], digest)
 	default:
 	}
