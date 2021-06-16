@@ -10,7 +10,7 @@ type MessageBase struct {
 	rtmp             *RTMP
 	messageTime      uint32
 	messageTimeDelta uint32
-	messageLength    int
+	messageLength    uint32
 	messageType      MessageType
 	messageStreamID  uint32
 	amf              amf_pkg.AMF
@@ -30,14 +30,19 @@ func (mb *MessageBase) Append(chunk *Chunk) {
 	mb.messagePayload = append(mb.messagePayload, chunk.Payload...)
 }
 
-func (mb *MessageBase) Done() int {
+func (mb *MessageBase) Remain() uint32 {
 	// fmt.Printf("done? messageLength:%d, len(payload):%d\n", mb.messageLength, len(mb.messagePayload))
-	return mb.messageLength - len(mb.messagePayload)
+	return mb.messageLength - uint32(len(mb.messagePayload))
+}
+
+func (mb *MessageBase) Done() bool {
+	return mb.Remain() == 0
 }
 
 type Message interface {
 	Append(*Chunk)
-	Done() int
+	Remain() uint32
+	Done() bool
 	GetInfo() *MessageBase
 	Update(*MessageBase)
 
@@ -127,7 +132,7 @@ func ParseMessage(rtmp *RTMP) (err error) {
 
 			switch chunk.MessageType {
 			case SET_CHUNK_SIZE:
-				// return newSetChunkSizeMessage(rtmp, chunk)
+				message = NewSetChunkSizeMessage(mb)
 			case ABORT_MESSAGE:
 			case ACKNOWLEDGEMENT:
 				message = NewAcknowledgeMessage(mb)
@@ -171,7 +176,7 @@ func ParseMessage(rtmp *RTMP) (err error) {
 		// }
 
 		message.Append(chunk)
-		if message.Done() == 0 {
+		if message.Done() {
 			break
 		}
 	}

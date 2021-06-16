@@ -11,23 +11,27 @@ import (
 type RTMP struct {
 	conn             easyio.EasyReadWriter
 	lastChunk        map[uint32]*Chunk //csid
-	peerMaxChunkSize int
+	peerMaxChunkSize uint32
 	ownMaxChunkSize  int
+	peer             string
+	app              string
+	room             *Room
 }
 
-func NewRTMP(conn net.Conn) (rtmp *RTMP) {
+func NewRTMP(conn net.Conn, peer string) (rtmp *RTMP) {
 	return &RTMP{
-		conn: rtmpConn{
+		conn: RTMPConn{
 			Conn: conn,
 		},
 		lastChunk:        make(map[uint32]*Chunk),
 		peerMaxChunkSize: 128,
 		ownMaxChunkSize:  128,
+		peer:             peer,
 	}
 }
 
-func (rtmp *RTMP) Handler() {
-	err := NewServer().Handshake(rtmp)
+func (rtmp *RTMP) HandlerServer() {
+	err := HandshakeServer(rtmp)
 	if err != nil {
 		fmt.Println("handshake error:", err)
 		return
@@ -45,4 +49,8 @@ func (rtmp *RTMP) Handler() {
 			continue
 		}
 	}
+}
+
+func (rtmp *RTMP) HandlerClient() {
+	//TODO
 }

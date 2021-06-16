@@ -24,6 +24,10 @@ type VideoMessage struct {
 	MessageBase
 }
 
+func (vm *VideoMessage) Done() bool {
+	return true
+}
+
 func NewVideoMessage(mb MessageBase) (am *VideoMessage) {
 	return &VideoMessage{
 		MessageBase: mb,

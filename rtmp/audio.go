@@ -22,6 +22,10 @@ type AudioMessage struct {
 	MessageBase
 }
 
+func (vm *AudioMessage) Done() bool {
+	return true
+}
+
 func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
 	return &AudioMessage{
 		MessageBase: mb,
@@ -34,6 +38,7 @@ func (am *AudioMessage) Send() (err error) {
 }
 
 func (am *AudioMessage) Parse() (err error) {
+	// p := NewPacket(am)
 	return nil
 }
 

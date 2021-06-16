@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync"
 
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
 	"github.com/SmartBrave/utils/easyerrors"
@@ -134,6 +135,10 @@ func (cm *CommandMessage) Do() (err error) {
 	var err1, err2, err3, err4 error
 	switch cm.CommandName {
 	case CONNECT:
+		if _, ok := Apps[cm.CommandObject.App]; !ok {
+			//TODO
+		}
+		cm.rtmp.app = cm.CommandObject.App
 		err1 = NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
 		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
 		//XXX: can set peer chunk size here
@@ -146,6 +151,20 @@ func (cm *CommandMessage) Do() (err error) {
 	case CREATE_STREAM:
 		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, cm.messageStreamID).Send()
 	case PUBLISH:
+		var rooms *sync.Map
+		var ok bool
+		if rooms, ok = Apps[cm.rtmp.app]; !ok {
+			//TODO: return error
+		}
+		value, ok := rooms.Load(cm.PublishingName)
+		if !ok {
+			cm.rtmp.room = NewRoom(cm.PublishingName)
+			rooms.Store(cm.PublishingName, cm.rtmp.room)
+		} else {
+			cm.rtmp.room, _ = value.(*Room)
+		}
+		cm.rtmp.room.Publisher.Store(cm.rtmp.peer, cm.rtmp)
+
 		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
 	case PLAY:
 		err1 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()

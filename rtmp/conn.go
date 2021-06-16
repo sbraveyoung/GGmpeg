@@ -7,11 +7,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-type rtmpConn struct {
+type RTMPConn struct {
 	net.Conn
 }
 
-func (conn rtmpConn) ReadFull(b []byte) (err error) {
+func (conn RTMPConn) ReadFull(b []byte) (err error) {
 	var n int
 	n, err = io.ReadFull(conn, b)
 	if err == io.EOF {
@@ -26,13 +26,17 @@ func (conn rtmpConn) ReadFull(b []byte) (err error) {
 	return err
 }
 
-func (conn rtmpConn) ReadN(n int) (b []byte, err error) {
+func (conn RTMPConn) ReadN(n uint32) (b []byte, err error) {
 	b = make([]byte, n)
 	err = conn.ReadFull(b)
 	return b, err
 }
 
-func (conn rtmpConn) WriteFull(b []byte) error {
+func (conn RTMPConn) ReadAll() (b []byte, err error) {
+	return io.ReadAll(conn)
+}
+
+func (conn RTMPConn) WriteFull(b []byte) error {
 	n, err := conn.Write(b)
 	if err != nil {
 		return errors.Wrap(err, "conn.Write")

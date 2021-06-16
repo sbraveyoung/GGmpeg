@@ -29,17 +29,13 @@ const (
 	COMPLEX2 HandshakeMode = 2
 )
 
-// type client struct{}
-// func (c *client)Handshake(conn rtmpConn)(err error){
-// }
-
 var (
 	FMSKey = []byte{
 		0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20,
 		0x41, 0x64, 0x6f, 0x62, 0x65, 0x20, 0x46, 0x6c,
 		0x61, 0x73, 0x68, 0x20, 0x4d, 0x65, 0x64, 0x69,
 		0x61, 0x20, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
-		0x20, 0x30, 0x30, 0x31, // Genuine Adobe Flash Media Server 001
+		0x20, 0x30, 0x30, 0x31, // Genuine Adobe Flash Media Peer 001
 		0xf0, 0xee, 0xc2, 0x4a, 0x80, 0x68, 0xbe, 0xe8,
 		0x2e, 0x00, 0xd0, 0xd1, 0x02, 0x9e, 0x7e, 0x57,
 		0x6e, 0xec, 0x5d, 0x2d, 0x29, 0x80, 0x6f, 0xab,
@@ -57,7 +53,7 @@ var (
 	}
 )
 
-type Server struct {
+type Peer struct {
 	handshakeMode HandshakeMode
 
 	//c0 s0
@@ -79,23 +75,81 @@ type Server struct {
 	serverKey    []byte //128byte
 }
 
-func NewServer() (server *Server) {
-	return &Server{
+func HandshakeServer(rtmp *RTMP) (err error) {
+	c0c1c2 := [C0_LEN + C1_LEN + C2_LEN]byte{}
+	c0 := c0c1c2[:C0_LEN]
+	c1 := c0c1c2[C0_LEN : C0_LEN+C1_LEN]
+	c2 := c0c1c2[C0_LEN+C1_LEN:]
+
+	p := &Peer{
 		serverVersion: 3,
 	}
+	err = rtmp.conn.ReadFull(c0)
+	if err != nil {
+		return errors.Wrap(err, "read c0 from conn")
+	}
+	fmt.Printf("c0:%x\n", c0)
+	p.parseC0(c0)
+	if p.clientVersion != p.serverVersion {
+		return errors.New("invalid client version")
+	}
+
+	err = rtmp.conn.ReadFull(c1)
+	if err != nil {
+		return errors.Wrap(err, "read c1 from conn")
+	}
+	fmt.Printf("c1:len:%d, data: %x\n", len(c1), c1)
+
+	s0 := p.makeS0()
+	fmt.Printf("s0:%x\n", s0)
+
+	p.parseC1(c1)
+
+	err = rtmp.conn.WriteFull(s0)
+	if err != nil {
+		return errors.Wrap(err, "write s0 to conn")
+	}
+
+	s1 := p.makeS1()
+	fmt.Printf("s1:len:%d, data: %x\n", len(s1), s1)
+	err = rtmp.conn.WriteFull(s1)
+	if err != nil {
+		return errors.Wrap(err, "write s1 to conn")
+	}
+
+	s2 := p.makeS2()
+	err = rtmp.conn.WriteFull(s2)
+	if err != nil {
+		return errors.Wrap(err, "write s2 to conn")
+	}
+	fmt.Printf("s2:%x\n", s2)
+
+	err = rtmp.conn.ReadFull(c2)
+	if err != nil {
+		return errors.Wrap(err, "read c2 from conn")
+	}
+	fmt.Printf("c2:%x\n", c2)
+	p.parseC2(c2)
+
+	return nil
 }
 
-func (s *Server) parseC0(c0 []byte) {
-	s.clientVersion = uint8(c0[0])
+func HandshakeClient(rtmp *RTMP) (err error) {
+	//TODO
+	return nil
 }
 
-func (s *Server) parseC1(c1 []byte) {
+func (p *Peer) parseC0(c0 []byte) {
+	p.clientVersion = uint8(c0[0])
+}
+
+func (p *Peer) parseC1(c1 []byte) {
 	//try complex handshake first
 
 	//key-digest
 	// keyBufOffset := 8
 	digestBufOffset := 8 + 764
-	s.handshakeMode = COMPLEX1
+	p.handshakeMode = COMPLEX1
 
 	try := 0
 complex:
@@ -109,8 +163,8 @@ complex:
 	// fmt.Println("keyOffset:", keyOffset)
 	// fmt.Println("digestOffset:", digestOffset)
 
-	// s.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
-	s.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+32]
+	// p.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
+	p.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+32]
 
 	joined := append([]byte{}, c1[:digestBufOffset+4+digestOffset]...)
 	joined = append(joined, c1[digestBufOffset+4+digestOffset+32:]...)
@@ -123,9 +177,9 @@ complex:
 	newDigest := mac.Sum(nil)
 
 	// fmt.Printf("newDigest, len:%d, data:%x\n", len(newDigest), newDigest)
-	// fmt.Printf("clientDigest, len:%d, data:%x\n", len(s.clientDigest), s.clientDigest)
+	// fmt.Printf("clientDigest, len:%d, data:%x\n", len(p.clientDigest), p.clientDigest)
 
-	if bytes.Compare(newDigest, s.clientDigest) == 0 {
+	if bytes.Compare(newDigest, p.clientDigest) == 0 {
 		fmt.Println("complex handshake success.")
 		return
 	} else {
@@ -133,7 +187,7 @@ complex:
 			fmt.Println("complex handshake mode 1 fail, try mode 2")
 			digestBufOffset = 8
 			// keyBufOffset = 8 + 764
-			s.handshakeMode = COMPLEX2
+			p.handshakeMode = COMPLEX2
 			try++
 			goto complex
 		} else {
@@ -143,32 +197,32 @@ complex:
 	}
 
 simple:
-	s.handshakeMode = SIMPLE
-	s.clientTimeStamp = binary.BigEndian.Uint32(c1[:4])
-	s.clientZero = binary.BigEndian.Uint32(c1[4:8])
-	s.clientRandom = c1[8:]
+	p.handshakeMode = SIMPLE
+	p.clientTimeStamp = binary.BigEndian.Uint32(c1[:4])
+	p.clientZero = binary.BigEndian.Uint32(c1[4:8])
+	p.clientRandom = c1[8:]
 }
-func (s *Server) parseC2(c2 []byte) {
+func (p *Peer) parseC2(c2 []byte) {
 	//TODO
 }
 
-func (s *Server) makeS0() (s0 []byte) {
+func (p *Peer) makeS0() (s0 []byte) {
 	b := bytes.NewBuffer(s0)
-	binary.Write(b, binary.BigEndian, s.serverVersion)
+	binary.Write(b, binary.BigEndian, p.serverVersion)
 	return b.Bytes()
 }
 
-func (s *Server) makeS1() (s1 []byte) {
-	s.serverTimeStamp = uint32(time.Now().Unix())
+func (p *Peer) makeS1() (s1 []byte) {
+	p.serverTimeStamp = uint32(time.Now().Unix())
 	s1 = make([]byte, S1_LEN)
 	_, _ = rand.Read(s1[8:])
-	binary.BigEndian.PutUint32(s1[0:4], s.serverTimeStamp)
+	binary.BigEndian.PutUint32(s1[0:4], p.serverTimeStamp)
 
 	digestBufOffset := 8
-	switch s.handshakeMode {
+	switch p.handshakeMode {
 	case SIMPLE:
 		copy(s1[4:8], []byte{0x0, 0x0, 0x0, 0x0})
-		s.serverRandom = s1[8:]
+		p.serverRandom = s1[8:]
 	case COMPLEX1:
 		digestBufOffset = 8 + 764
 		fallthrough
@@ -192,20 +246,20 @@ func (s *Server) makeS1() (s1 []byte) {
 	return s1
 }
 
-func (s *Server) makeS2() (s2 []byte) {
-	switch s.handshakeMode {
+func (p *Peer) makeS2() (s2 []byte) {
+	switch p.handshakeMode {
 	case SIMPLE:
 		b := bytes.NewBuffer(s2)
-		binary.Write(b, binary.BigEndian, s.clientTimeStamp)
-		binary.Write(b, binary.BigEndian, s.clientZero)
-		binary.Write(b, binary.BigEndian, s.clientRandom)
+		binary.Write(b, binary.BigEndian, p.clientTimeStamp)
+		binary.Write(b, binary.BigEndian, p.clientZero)
+		binary.Write(b, binary.BigEndian, p.clientRandom)
 		return b.Bytes()
 	case COMPLEX1, COMPLEX2:
 		s2 = make([]byte, S2_LEN)
 		_, _ = rand.Read(s2)
 
 		mac := hmac.New(sha256.New, FMSKey)
-		mac.Write(s.clientDigest)
+		mac.Write(p.clientDigest)
 		tmpDigest := mac.Sum(nil)
 
 		mac = hmac.New(sha256.New, tmpDigest)
@@ -215,60 +269,4 @@ func (s *Server) makeS2() (s2 []byte) {
 	default:
 	}
 	return
-}
-
-func (s *Server) Handshake(rtmp *RTMP) (err error) {
-	c0c1c2 := [C0_LEN + C1_LEN + C2_LEN]byte{}
-	c0 := c0c1c2[:C0_LEN]
-	c1 := c0c1c2[C0_LEN : C0_LEN+C1_LEN]
-	c2 := c0c1c2[C0_LEN+C1_LEN:]
-
-	err = rtmp.conn.ReadFull(c0)
-	if err != nil {
-		return errors.Wrap(err, "read c0 from conn")
-	}
-	fmt.Printf("c0:%x\n", c0)
-	s.parseC0(c0)
-	if s.clientVersion != s.serverVersion {
-		return errors.New("invalid client version")
-	}
-
-	err = rtmp.conn.ReadFull(c1)
-	if err != nil {
-		return errors.Wrap(err, "read c1 from conn")
-	}
-	fmt.Printf("c1:len:%d, data: %x\n", len(c1), c1)
-
-	s0 := s.makeS0()
-	fmt.Printf("s0:%x\n", s0)
-
-	s.parseC1(c1)
-
-	err = rtmp.conn.WriteFull(s0)
-	if err != nil {
-		return errors.Wrap(err, "write s0 to conn")
-	}
-
-	s1 := s.makeS1()
-	fmt.Printf("s1:len:%d, data: %x\n", len(s1), s1)
-	err = rtmp.conn.WriteFull(s1)
-	if err != nil {
-		return errors.Wrap(err, "write s1 to conn")
-	}
-
-	s2 := s.makeS2()
-	err = rtmp.conn.WriteFull(s2)
-	if err != nil {
-		return errors.Wrap(err, "write s2 to conn")
-	}
-	fmt.Printf("s2:%x\n", s2)
-
-	err = rtmp.conn.ReadFull(c2)
-	if err != nil {
-		return errors.Wrap(err, "read c2 from conn")
-	}
-	fmt.Printf("c2:%x\n", c2)
-	s.parseC2(c2)
-
-	return nil
 }

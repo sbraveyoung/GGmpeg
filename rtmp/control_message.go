@@ -36,6 +36,7 @@ func (wasm *WindowAcknowledgeSizeMessage) Parse() (err error) {
 }
 
 func (wasm *WindowAcknowledgeSizeMessage) Do() (err error) {
+	//TODO
 	return nil
 }
 
@@ -159,7 +160,7 @@ func (ucm *UserControlMessage) Do() (err error) {
 
 type SetChunkSizeMessage struct {
 	MessageBase
-	NewChunkSize int
+	NewChunkSize uint32
 }
 
 func NewSetChunkSizeMessage(mb MessageBase, fields ...interface{} /*NewChunkSize int*/) (scsm *SetChunkSizeMessage) {
@@ -168,7 +169,7 @@ func NewSetChunkSizeMessage(mb MessageBase, fields ...interface{} /*NewChunkSize
 	}
 	var ok bool
 	if len(fields) == 1 {
-		if scsm.NewChunkSize, ok = fields[0].(int); !ok {
+		if scsm.NewChunkSize, ok = fields[0].(uint32); !ok {
 			scsm.NewChunkSize = 128
 		}
 	}
@@ -181,12 +182,13 @@ func (scsm *SetChunkSizeMessage) Send() error {
 }
 
 func (scsm *SetChunkSizeMessage) Parse() (err error) {
-	//TODO
+	scsm.NewChunkSize = binary.BigEndian.Uint32(scsm.messagePayload)
+	fmt.Println("new chunk size of peer::", scsm.NewChunkSize)
 	return nil
 }
 
 func (scsm *SetChunkSizeMessage) Do() error {
-	//TODO
+	scsm.rtmp.peerMaxChunkSize = scsm.NewChunkSize
 	return nil
 }
 

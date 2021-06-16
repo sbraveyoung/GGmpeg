@@ -138,7 +138,7 @@ func decodeStringamf0(r easyio.EasyReader) (str string, err error) {
 	}
 
 	var b []byte
-	b, err = readByteamf0(r, int(length))
+	b, err = readByteamf0(r, uint32(length))
 	return string(b), err
 }
 
@@ -150,13 +150,13 @@ func decodeLongStringamf0(r easyio.EasyReader) (str string, err error) {
 	}
 
 	var b []byte
-	b, err = readByteamf0(r, int(length))
+	b, err = readByteamf0(r, length)
 	return string(b), err
 }
 
 //TODO: utf-8 support
-func readByteamf0(r easyio.EasyReader, length int) (b []byte, err error) {
-	b, err = r.ReadN(int(length))
+func readByteamf0(r easyio.EasyReader, length uint32) (b []byte, err error) {
+	b, err = r.ReadN(uint32(length))
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +281,7 @@ func decodeXMLDocumentamf0(r easyio.EasyReader) (xml []byte, err error) {
 		return xml, err
 	}
 
-	return readByteamf0(r, int(length))
+	return readByteamf0(r, length)
 }
 
 func (amf0) Encode(w easyio.EasyWriter, obj interface{}) (err error) {
