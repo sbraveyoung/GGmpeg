@@ -1,5 +1,13 @@
 package rtmp
 
+import (
+	"bytes"
+	"fmt"
+
+	"github.com/SmartBrave/GGmpeg/flv"
+	"github.com/SmartBrave/utils/easyio"
+)
+
 type AudioCodec float64
 
 const (
@@ -20,10 +28,7 @@ const (
 
 type AudioMessage struct {
 	MessageBase
-}
-
-func (vm *AudioMessage) Done() bool {
-	return true
+	tag *flv.Tag
 }
 
 func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
@@ -34,14 +39,21 @@ func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
 
 func (am *AudioMessage) Send() (err error) {
 	//TODO
+	fmt.Println("-------------------------------------------------send audio--------------------------------------")
 	return nil
 }
 
 func (am *AudioMessage) Parse() (err error) {
-	// p := NewPacket(am)
+	fmt.Printf("audio message length:%d\npayload:%x\n", len(am.messagePayload), am.messagePayload)
+	am.tag, err = flv.ParseTag(easyio.NewEasyReader(bytes.NewReader(am.messagePayload)))
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (am *AudioMessage) Do() (err error) {
+	am.rtmp.room.Cache.Append(am.tag)
 	return nil
 }

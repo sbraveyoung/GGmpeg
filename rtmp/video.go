@@ -1,5 +1,12 @@
 package rtmp
 
+import (
+	"bytes"
+
+	"github.com/SmartBrave/GGmpeg/flv"
+	"github.com/SmartBrave/utils/easyio"
+)
+
 type VideoCodec float64
 
 const (
@@ -24,25 +31,27 @@ type VideoMessage struct {
 	MessageBase
 }
 
-func (vm *VideoMessage) Done() bool {
-	return true
-}
-
-func NewVideoMessage(mb MessageBase) (am *VideoMessage) {
+func NewVideoMessage(mb MessageBase) (vm *VideoMessage) {
 	return &VideoMessage{
 		MessageBase: mb,
 	}
 }
 
-func (am *VideoMessage) Send() (err error) {
+func (vm *VideoMessage) Send() (err error) {
 	//TODO
 	return nil
 }
 
-func (am *VideoMessage) Parse() (err error) {
+func (vm *VideoMessage) Parse() (err error) {
+	tag, err := flv.ParseTag(easyio.NewEasyReader(bytes.NewReader(vm.messagePayload)))
+	if err != nil {
+		return err
+	}
+
+	vm.rtmp.room.Cache.Append(tag)
 	return nil
 }
 
-func (am *VideoMessage) Do() (err error) {
+func (vm *VideoMessage) Do() (err error) {
 	return nil
 }

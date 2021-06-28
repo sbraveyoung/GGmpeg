@@ -3,6 +3,7 @@ package flv
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/SmartBrave/utils/easyio"
 )
@@ -50,7 +51,7 @@ func ParseFLV(er easyio.EasyReader) (flv *FLV, err error) {
 	return flv, nil
 }
 
-type Tag struct {
+type TagBase struct {
 	TagType   uint8
 	DataSize  uint32 //uint24
 	TimeStamp uint32
@@ -58,18 +59,34 @@ type Tag struct {
 	Data      []byte
 }
 
+type Tag interface{}
+
 func ParseTag(er easyio.EasyReader) (tag *Tag, err error) {
 	b, err := er.ReadN(11)
 	if err != nil {
 		return
 	}
 
-	tag = &Tag{
+	fmt.Printf("b in tag:%x\n", b)
+	tag = &TagBase{
 		TagType:   b[0],
 		DataSize:  uint32(0x00)<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3]),
 		TimeStamp: uint32(b[7])<<24 | uint32(b[4])<<16 | uint32(b[5])<<8 | uint32(b[6]),
 		StreamID:  uint32(0x00)<<24 | uint32(b[8])<<16 | uint32(b[9])<<8 | uint32(b[10]),
 	}
+	fmt.Printf("tag:%+v\n", *tag)
 	tag.Data, err = er.ReadN(tag.DataSize)
 	return tag, err
+}
+
+func (tag *Tag) Marshal() (b []byte) {
+	b = make([]byte, 0, 11+len(tag.Data))
+
+	b = append(b, tag.TagType)
+	b = append(b, uint8(tag.DataSize>>16)&0xff, uint8(tag.DataSize>>8)&0xff, uint8(tag.DataSize&0xff))
+	b = append(b, uint8(tag.TimeStamp>>16)&0xff, uint8(tag.TimeStamp>>8)&0xff, uint8(tag.TimeStamp&0xff))
+	b = append(b, uint8(tag.TimeStamp>>24)&0xff)
+	b = append(b, uint8(tag.StreamID>>16)&0xff, uint8(tag.StreamID>>8)&0xff, uint8(tag.StreamID&0xff))
+	b = append(b, tag.Data...)
+	return b
 }

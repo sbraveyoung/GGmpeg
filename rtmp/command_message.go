@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"sync"
 
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
 	"github.com/SmartBrave/utils/easyerrors"
@@ -151,22 +150,32 @@ func (cm *CommandMessage) Do() (err error) {
 	case CREATE_STREAM:
 		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, cm.messageStreamID).Send()
 	case PUBLISH:
-		var rooms *sync.Map
-		var ok bool
-		if rooms, ok = Apps[cm.rtmp.app]; !ok {
+		if rooms, ok := Apps[cm.rtmp.app]; !ok {
 			//TODO: return error
-		}
-		value, ok := rooms.Load(cm.PublishingName)
-		if !ok {
-			cm.rtmp.room = NewRoom(cm.PublishingName)
-			rooms.Store(cm.PublishingName, cm.rtmp.room)
 		} else {
-			cm.rtmp.room, _ = value.(*Room)
+			if room, ok := rooms.Load(cm.PublishingName); !ok {
+				cm.rtmp.room = NewRoom(cm.PublishingName)
+				rooms.Store(cm.PublishingName, cm.rtmp.room)
+			} else {
+				cm.rtmp.room, _ = room.(*Room)
+			}
+			cm.rtmp.room.Publisher.Store(cm.rtmp.peer, cm.rtmp)
 		}
-		cm.rtmp.room.Publisher.Store(cm.rtmp.peer, cm.rtmp)
 
 		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
 	case PLAY:
+		if rooms, ok := Apps[cm.rtmp.app]; !ok {
+			//TODO: return error
+		} else {
+			if room, ok := rooms.Load(cm.PublishingName); !ok {
+				cm.rtmp.room = NewRoom(cm.PublishingName)
+				rooms.Store(cm.PublishingName, cm.rtmp.room)
+			} else {
+				cm.rtmp.room, _ = room.(*Room)
+			}
+			cm.rtmp.room.Player.Store(cm.rtmp.peer, cm.rtmp)
+		}
+
 		err1 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
 		// err2 := NewDataMessage(cm.MessageBase).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
