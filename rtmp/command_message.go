@@ -131,7 +131,8 @@ func (cm *CommandMessage) Parse() (err error) {
 }
 
 func (cm *CommandMessage) Do() (err error) {
-	var err1, err2, err3, err4 error
+
+	var err1, err2, err3, err4, err5 error
 	switch cm.CommandName {
 	case CONNECT:
 		if _, ok := Apps[cm.CommandObject.App]; !ok {
@@ -142,13 +143,32 @@ func (cm *CommandMessage) Do() (err error) {
 		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
 		//XXX: can set peer chunk size here
 		err3 = NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
-		err4 = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, 0).Send()
+		err4 = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: _RESULT,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				FmsVer: "FMS/3,0,1,123",
+				// Capabilities:31,
+				// Level : "status",
+				// Code : "NetConnection.Connect.Success",
+				// Description : "Connection succeeded",
+				// ObjectEncoding : 0,
+			},
+		}).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	case RELEASE_STREAM, FCPUBLISH: //ignore
 	case CALL:
 	case CLOSE:
 	case CREATE_STREAM:
-		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, _RESULT, cm.TranscationID, cm.messageStreamID).Send()
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: _RESULT,
+			TranscationID:   cm.TranscationID,
+			StreamID:        cm.messageStreamID,
+		}).Send()
 	case PUBLISH:
 		if rooms, ok := Apps[cm.rtmp.app]; !ok {
 			//TODO: return error
@@ -162,7 +182,17 @@ func (cm *CommandMessage) Do() (err error) {
 			cm.rtmp.room.Publisher.Store(cm.rtmp.peer, cm.rtmp)
 		}
 
-		err = NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Publish.Start",
+				Description: "Start publishing",
+			},
+		}).Send()
 	case PLAY:
 		if rooms, ok := Apps[cm.rtmp.app]; !ok {
 			//TODO: return error
@@ -176,9 +206,52 @@ func (cm *CommandMessage) Do() (err error) {
 			cm.rtmp.room.Player.Store(cm.rtmp.peer, cm.rtmp)
 		}
 
-		err1 := NewCommandMessageResponse(cm.MessageBase, cm.CommandName, ON_STATUS, cm.TranscationID, 0).Send()
-		// err2 := NewDataMessage(cm.MessageBase).Send()
-		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
+		err1 = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Play.Reset",
+				Description: "Start play",
+			},
+		}).Send()
+		err2 = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Play.Start",
+				Description: "Start play",
+			},
+		}).Send()
+		err3 = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Data.Start",
+				Description: "Start play",
+			},
+		}).Send()
+		err4 = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Play.PublishNotify",
+				Description: "Start play notify",
+			},
+		}).Send()
+		err5 = cm.rtmp.room.Meta.Send()
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
 	case _RESULT:
 	case _ERROR:
 	default:
@@ -205,41 +278,6 @@ type CommandMessageResponse struct {
 	StreamID        uint32
 }
 
-func NewCommandMessageResponse(mb MessageBase, commandName, commandRespName string, transcationID int, streamID uint32) (cm *CommandMessageResponse) {
-	cmr := &CommandMessageResponse{
-		MessageBase:     mb,
-		CommandName:     commandName,
-		CommandRespName: commandRespName,
-		TranscationID:   transcationID,
-	}
-
-	switch commandName {
-	case CONNECT:
-		cmr.CommandObject.FmsVer = "FMS/3,0,1,123"
-		// cmr.CommandObject.Capabilities=31
-		// cmr.CommandObject.Level = "status"
-		// cmr.CommandObject.Code = "NetConnection.Connect.Success"
-		// cmr.CommandObject.Description = "Connection succeeded"
-		// cmr.CommandObject.ObjectEncoding = 0
-	case CREATE_STREAM:
-		cmr.StreamID = streamID
-	case PUBLISH:
-		cmr.CommandObject.Level = "status"
-		cmr.CommandObject.Code = "NetStream.Publish.Start"
-		cmr.CommandObject.Description = "Start publishing"
-	case PLAY:
-		cmr.CommandObject.Level = "status"
-		cmr.CommandObject.Code = "NetStream.Play.Start"
-		cmr.CommandObject.Description = "Start play"
-	default: //do nothing
-	}
-	return cmr
-}
-
-// func (cmr *CommandMessageResponse) Do() error {
-// return nil
-// }
-
 func (cmr *CommandMessageResponse) Send() (err error) {
 	buf := bytes.NewBuffer([]byte{})
 	writer := easyio.NewEasyWriter(buf)
@@ -258,6 +296,8 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 		err3 = amf.Encode(writer, nil)
 		err4 = amf.Encode(writer, structs.Map(cmr.CommandObject))
 	case PLAY:
+		err3 = amf.Encode(writer, nil)
+		err4 = amf.Encode(writer, structs.Map(cmr.CommandObject))
 	}
 	err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	if err != nil {

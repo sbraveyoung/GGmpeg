@@ -1,10 +1,7 @@
 package rtmp
 
 import (
-	"bytes"
-
 	"github.com/SmartBrave/GGmpeg/flv"
-	"github.com/SmartBrave/utils/easyio"
 )
 
 type VideoCodec float64
@@ -29,6 +26,7 @@ const (
 
 type VideoMessage struct {
 	MessageBase
+	videoTag *flv.VideoTag
 }
 
 func NewVideoMessage(mb MessageBase) (vm *VideoMessage) {
@@ -38,20 +36,33 @@ func NewVideoMessage(mb MessageBase) (vm *VideoMessage) {
 }
 
 func (vm *VideoMessage) Send() (err error) {
-	//TODO
+	for i := 0; i >= 0; i++ {
+		lIndex := i * int(vm.rtmp.peerMaxChunkSize)
+		rIndex := (i + 1) * int(vm.rtmp.peerMaxChunkSize)
+		if rIndex > len(vm.messagePayload) {
+			rIndex = len(vm.messagePayload)
+			i = -2
+		}
+		NewChunk(VIDEO_MESSAGE, FMT0, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+	}
 	return nil
 }
 
 func (vm *VideoMessage) Parse() (err error) {
-	tag, err := flv.ParseTag(easyio.NewEasyReader(bytes.NewReader(vm.messagePayload)))
+	vm.videoTag, err = flv.ParseVideoTag(&flv.TagBase{
+		TagType:   VIDEO_MESSAGE,
+		DataSize:  vm.messageLength,
+		TimeStamp: vm.messageTime,
+		StreamID:  0,
+	}, vm.messagePayload)
 	if err != nil {
 		return err
 	}
 
-	vm.rtmp.room.Cache.Append(tag)
 	return nil
 }
 
 func (vm *VideoMessage) Do() (err error) {
+	vm.rtmp.room.Cache.Append(vm.videoTag)
 	return nil
 }

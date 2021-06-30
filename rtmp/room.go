@@ -1,9 +1,7 @@
 package rtmp
 
 import (
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/SmartBrave/GGmpeg/flv"
 	"github.com/SmartBrave/utils/ring_buffer"
@@ -23,47 +21,44 @@ type Room struct {
 	RoomID    string
 	Publisher sync.Map //peer ip+port, rtmp conn. TODO: support multi publisher
 	Player    sync.Map //peer ip+port, rtmp conn
+	Meta      *DataMessage
 	Cache     ring_buffer.Cache
 }
 
 func NewRoom(roomID string) *Room {
-	m := &Room{
+	r := &Room{
 		RoomID:    roomID,
 		Publisher: sync.Map{},
 		Player:    sync.Map{},
-		Cache:     ring_buffer.NewRingBuffer(1024).Array().Build(),
+		// Cache:     ring_buffer.NewRingBuffer(1024).Array().Build(),
+		Cache: ring_buffer.NewRingBuffer(1024).Block().Build(),
 	}
-	go m.Transmit()
-	return m
+	go r.Transmit()
+	return r
 }
 
-func (m *Room) Transmit() {
-	ticker := time.NewTicker(time.Millisecond * time.Duration(10))
-	var tag *flv.Tag
+func (r *Room) Transmit() {
 	for {
-		select {
-		case <-ticker.C:
-			tag, _ = m.Cache.Get().(*flv.Tag)
-			if tag == nil {
-				continue
-			}
+		tag, ok := r.Cache.Get().(flv.Tag)
+		if !ok || tag == nil {
+			continue
 		}
-		fmt.Println("get tag from buffer -----------------------------------------------------------------------")
 
-		m.Player.Range(func(key, value interface{}) bool {
+		r.Player.Range(func(key, value interface{}) bool {
 			// peer, _ := key.(string)
 			rtmp, _ := value.(*RTMP)
+			info := tag.GetTagInfo()
 			mb := MessageBase{
 				rtmp:             rtmp,
-				messageTime:      tag.TimeStamp,
+				messageTime:      info.TimeStamp,
 				messageTimeDelta: 0,
-				messageLength:    tag.DataSize,
-				messageType:      MessageType(tag.TagType),
+				messageLength:    info.DataSize,
+				messageType:      MessageType(info.TagType),
 				messageStreamID:  0,
 				messagePayload:   tag.Marshal(),
 			}
 
-			switch tag.TagType {
+			switch tag.GetTagInfo().TagType {
 			case AUDIO_MESSAGE:
 				NewAudioMessage(mb).Send()
 			case VIDEO_MESSAGE:

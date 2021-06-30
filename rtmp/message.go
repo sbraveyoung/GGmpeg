@@ -152,28 +152,22 @@ func ParseMessage(rtmp *RTMP) (err error) {
 				fallthrough
 			case DATA_MESSAGE_AMF0:
 				message = NewDataMessage(mb)
+
 			case SHARE_OBJECT_MESSAGE_AMF3:
 				// mb.amf = amf_pkg.AMF3
 				fallthrough
 			case SHARE_OBJECT_MESSAGE_AMF0:
+
 			case COMMAND_MESSAGE_AMF3:
 				// mb.amf = amf_pkg.AMF3
 				fallthrough
 			case COMMAND_MESSAGE_AMF0:
 				message = NewCommandMessage(mb)
+
 			default:
 				return errors.New("invalid message type")
 			}
 		}
-		// mb := message.GetInfo()
-		// switch chunk.Fmt {
-		// case FMT1, FMT2:
-		// mb.messageTimeDelta = chunk.MessageTimeStamp
-		// message.Update(mb)
-		// case FMT3: //do nothing
-		// default:
-		// return errors.New("invalid chunk format")
-		// }
 
 		message.Append(chunk)
 		if message.Done() {

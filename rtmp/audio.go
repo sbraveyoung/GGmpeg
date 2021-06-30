@@ -1,11 +1,7 @@
 package rtmp
 
 import (
-	"bytes"
-	"fmt"
-
 	"github.com/SmartBrave/GGmpeg/flv"
-	"github.com/SmartBrave/utils/easyio"
 )
 
 type AudioCodec float64
@@ -28,7 +24,7 @@ const (
 
 type AudioMessage struct {
 	MessageBase
-	tag *flv.Tag
+	tag flv.Tag
 }
 
 func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
@@ -38,14 +34,25 @@ func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
 }
 
 func (am *AudioMessage) Send() (err error) {
-	//TODO
-	fmt.Println("-------------------------------------------------send audio--------------------------------------")
+	for i := 0; i >= 0; i++ {
+		lIndex := i * int(am.rtmp.peerMaxChunkSize)
+		rIndex := (i + 1) * int(am.rtmp.peerMaxChunkSize)
+		if rIndex > len(am.messagePayload) {
+			rIndex = len(am.messagePayload)
+			i = -2
+		}
+		NewChunk(VIDEO_MESSAGE, FMT0, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+	}
 	return nil
 }
 
 func (am *AudioMessage) Parse() (err error) {
-	fmt.Printf("audio message length:%d\npayload:%x\n", len(am.messagePayload), am.messagePayload)
-	am.tag, err = flv.ParseTag(easyio.NewEasyReader(bytes.NewReader(am.messagePayload)))
+	am.tag, err = flv.ParseAudioTag(flv.TagBase{
+		TagType:   AUDIO_MESSAGE,
+		DataSize:  am.messageLength,
+		TimeStamp: am.messageTime,
+		StreamID:  0,
+	}, am.messagePayload)
 	if err != nil {
 		return err
 	}

@@ -35,7 +35,8 @@ const (
 	SND_STEREO       = 1 //for AAC, always 1
 )
 
-type Audio struct {
+type AudioTag struct {
+	TagBase
 	SoundFormat   uint8 //4bits
 	SoundRate     uint8 //2bits
 	SoundSize     uint8 //1bit
@@ -44,11 +45,12 @@ type Audio struct {
 	AACPacketType uint8
 }
 
-func ParseAudio(b []byte) (audio *Audio, err error) {
+func ParseAudioTag(tb TagBase, b []byte) (audio *AudioTag, err error) {
 	if len(b) <= 1 {
 		return nil, errors.New("invalid audio format")
 	}
-	audio = &Audio{
+	audio = &AudioTag{
+		TagBase:     tb,
 		SoundFormat: b[0] >> 4,
 		SoundRate:   (b[0] >> 2) & 0x03,
 		SoundSize:   (b[0] >> 1) & 0x01,
@@ -65,4 +67,15 @@ func ParseAudio(b []byte) (audio *Audio, err error) {
 	}
 
 	return audio, nil
+}
+
+func (at *AudioTag) Marshal() (b []byte) {
+	b = make([]byte, 0, 1)
+
+	b = append(b, (at.SoundFormat<<4)|((at.SoundRate&0x03)<<2)|((at.SoundSize&0x01)<<1)|(at.SoundType&0x01))
+	if at.SoundFormat == AAC {
+		b = append(b, at.AACPacketType)
+		b = append(b, at.SoundData...)
+	}
+	return b
 }
