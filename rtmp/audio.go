@@ -24,30 +24,44 @@ const (
 
 type AudioMessage struct {
 	MessageBase
-	tag flv.Tag
+	audioTag *flv.AudioTag
 }
 
-func NewAudioMessage(mb MessageBase) (am *AudioMessage) {
-	return &AudioMessage{
+func NewAudioMessage(mb MessageBase, fields ...interface{}) (am *AudioMessage) {
+	am = &AudioMessage{
 		MessageBase: mb,
 	}
+	if len(fields) == 1 {
+		var ok bool
+		if am.audioTag, ok = fields[0].(*flv.AudioTag); !ok {
+			//TODO
+		} else {
+			am.messagePayload = am.audioTag.Marshal()
+		}
+	}
+	return am
 }
 
 func (am *AudioMessage) Send() (err error) {
 	for i := 0; i >= 0; i++ {
+		fmt := FMT0
+		if i != 0 {
+			fmt = FMT3
+		}
+
 		lIndex := i * int(am.rtmp.peerMaxChunkSize)
 		rIndex := (i + 1) * int(am.rtmp.peerMaxChunkSize)
 		if rIndex > len(am.messagePayload) {
 			rIndex = len(am.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, FMT0, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		NewChunk(VIDEO_MESSAGE, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
 	}
 	return nil
 }
 
 func (am *AudioMessage) Parse() (err error) {
-	am.tag, err = flv.ParseAudioTag(flv.TagBase{
+	am.audioTag, err = flv.ParseAudioTag(flv.TagBase{
 		TagType:   AUDIO_MESSAGE,
 		DataSize:  am.messageLength,
 		TimeStamp: am.messageTime,
@@ -61,6 +75,10 @@ func (am *AudioMessage) Parse() (err error) {
 }
 
 func (am *AudioMessage) Do() (err error) {
-	am.rtmp.room.Cache.Append(am.tag)
+	// if am.audioTag.SoundFormat == flv.AAC && am.audioTag.AACPacketType == flv.AAC_SEQUENCE_HEADER {
+	// am.rtmp.room.AudioSeq = am.audioTag
+	// return nil
+	// }
+	// am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
 	return nil
 }

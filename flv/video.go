@@ -1,6 +1,8 @@
 package flv
 
-import "errors"
+import (
+	"errors"
+)
 
 const ( //frame_type
 	KEYFRAME                 uint8 = 1 //for AVC, a seekable frame
@@ -27,7 +29,7 @@ const ( //avc_packet_type
 )
 
 type VideoTag struct {
-	*TagBase
+	TagBase
 	FrameType       uint8 //4bits
 	CodecID         uint8 //4bits
 	VideoData       []byte
@@ -35,7 +37,7 @@ type VideoTag struct {
 	CompositionTime uint32 //int24
 }
 
-func ParseVideoTag(tb *TagBase, b []byte) (video *VideoTag, err error) {
+func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid video format")
 	}

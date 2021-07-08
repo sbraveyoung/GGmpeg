@@ -16,17 +16,18 @@ type RTMP struct {
 	peer             string
 	app              string
 	room             *Room
+	server           *Server
+	start            bool
 }
 
-func NewRTMP(conn net.Conn, peer string) (rtmp *RTMP) {
+func NewRTMP(conn net.Conn, peer string, server *Server) (rtmp *RTMP) {
 	return &RTMP{
-		conn: RTMPConn{
-			Conn: conn,
-		},
+		conn:             easyio.NewEasyReadWriter(conn),
 		lastChunk:        make(map[uint32]*Chunk),
 		peerMaxChunkSize: 128,
 		ownMaxChunkSize:  128,
 		peer:             peer,
+		server:           server,
 	}
 }
 

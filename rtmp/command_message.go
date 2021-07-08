@@ -132,10 +132,10 @@ func (cm *CommandMessage) Parse() (err error) {
 
 func (cm *CommandMessage) Do() (err error) {
 
-	var err1, err2, err3, err4, err5 error
+	var err1, err2, err3, err4 error
 	switch cm.CommandName {
 	case CONNECT:
-		if _, ok := Apps[cm.CommandObject.App]; !ok {
+		if _, ok := cm.rtmp.server.Apps[cm.CommandObject.App]; !ok {
 			//TODO
 		}
 		cm.rtmp.app = cm.CommandObject.App
@@ -170,7 +170,7 @@ func (cm *CommandMessage) Do() (err error) {
 			StreamID:        cm.messageStreamID,
 		}).Send()
 	case PUBLISH:
-		if rooms, ok := Apps[cm.rtmp.app]; !ok {
+		if rooms, ok := cm.rtmp.server.Apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
 			if room, ok := rooms.Load(cm.PublishingName); !ok {
@@ -179,7 +179,7 @@ func (cm *CommandMessage) Do() (err error) {
 			} else {
 				cm.rtmp.room, _ = room.(*Room)
 			}
-			cm.rtmp.room.Publisher.Store(cm.rtmp.peer, cm.rtmp)
+			cm.rtmp.room.Publisher = cm.rtmp
 		}
 
 		err = (&CommandMessageResponse{
@@ -194,16 +194,17 @@ func (cm *CommandMessage) Do() (err error) {
 			},
 		}).Send()
 	case PLAY:
-		if rooms, ok := Apps[cm.rtmp.app]; !ok {
+		if rooms, ok := cm.rtmp.server.Apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
 			if room, ok := rooms.Load(cm.PublishingName); !ok {
+				//XXX: return "room does not exist" is better?
 				cm.rtmp.room = NewRoom(cm.PublishingName)
 				rooms.Store(cm.PublishingName, cm.rtmp.room)
 			} else {
 				cm.rtmp.room, _ = room.(*Room)
 			}
-			cm.rtmp.room.Player.Store(cm.rtmp.peer, cm.rtmp)
+			cm.rtmp.room.Players.Store(cm.rtmp.peer, cm.rtmp)
 		}
 
 		err1 = (&CommandMessageResponse{
@@ -250,8 +251,7 @@ func (cm *CommandMessage) Do() (err error) {
 				Description: "Start play notify",
 			},
 		}).Send()
-		err5 = cm.rtmp.room.Meta.Send()
-		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
 	case _RESULT:
 	case _ERROR:
 	default:
@@ -310,6 +310,19 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 	if err != nil {
 		return err
 	}
-	//TODO: split message in multi chunk
-	return NewChunk(COMMAND_MESSAGE_AMF0, FMT0, b).Send(cmr.rtmp)
+	for i := 0; i >= 0; i++ {
+		fmt := FMT0
+		if i != 0 {
+			fmt = FMT3
+		}
+
+		lIndex := i * int(cmr.rtmp.peerMaxChunkSize)
+		rIndex := (i + 1) * int(cmr.rtmp.peerMaxChunkSize)
+		if rIndex > len(b) {
+			rIndex = len(b)
+			i = -2
+		}
+		NewChunk(COMMAND_MESSAGE_AMF0, fmt, 10, b[lIndex:rIndex]).Send(cmr.rtmp)
+	}
+	return nil
 }

@@ -46,10 +46,23 @@ type DataMessage struct {
 	MetaData    MetaData
 }
 
-func NewDataMessage(mb MessageBase) (dm *DataMessage) {
-	return &DataMessage{
+func NewDataMessage(mb MessageBase, fields ...interface{}) (dm *DataMessage) {
+	dm = &DataMessage{
 		MessageBase: mb,
 	}
+
+	if len(fields) == 3 {
+		var ok bool
+		if dm.FirstField, ok = fields[0].(string); !ok {
+			dm.FirstField = ""
+		}
+		if dm.SecondField, ok = fields[1].(string); !ok {
+			dm.SecondField = ""
+		}
+		if dm.MetaData, ok = fields[2].(MetaData); !ok {
+		}
+	}
+	return dm
 }
 
 func (dm *DataMessage) Send() (err error) {
@@ -73,13 +86,18 @@ func (dm *DataMessage) Send() (err error) {
 	}
 
 	for i := 0; i >= 0; i++ {
+		fmt := FMT0
+		if i != 0 {
+			fmt = FMT3
+		}
+
 		lIndex := i * int(dm.rtmp.peerMaxChunkSize)
 		rIndex := (i + 1) * int(dm.rtmp.peerMaxChunkSize)
 		if rIndex > len(b) {
 			rIndex = len(b)
 			i = -2
 		}
-		NewChunk(DATA_MESSAGE_AMF0, FMT0, b[lIndex:rIndex]).Send(dm.rtmp)
+		NewChunk(DATA_MESSAGE_AMF0, fmt, 6, b[lIndex:rIndex]).Send(dm.rtmp)
 	}
 	return nil
 }

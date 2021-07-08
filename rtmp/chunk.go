@@ -75,7 +75,6 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("chunk:%x\n", b11)
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
 		cmhp.MessageType = MessageType(b11[6])
@@ -85,7 +84,6 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("chunk:%x\n", b7)
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
@@ -95,7 +93,6 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("chunk:%x\n", b3)
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
@@ -161,11 +158,11 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 }
 
 //NOTE: ensure len(payload) <= peerMaxChunkSize
-func NewChunk(messageType MessageType, fmt MessageHeaderType, payload []byte) (chunk *Chunk) {
+func NewChunk(messageType MessageType, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
 	return &Chunk{
 		ChunkBasicHeader: ChunkBasicHeader{
 			Fmt:  fmt,
-			CsID: 2,
+			CsID: csid,
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
 			MessageTimeStamp: 0,
@@ -179,7 +176,18 @@ func NewChunk(messageType MessageType, fmt MessageHeaderType, payload []byte) (c
 
 func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	b := []byte{}
-	b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
+	if chunk.CsID < 3 {
+		return errors.New("invalid csid")
+	} else if chunk.CsID < 64 {
+		b = append(b, byte(uint8(chunk.Fmt<<6)|uint8(chunk.CsID&0x3f)))
+	} else if chunk.CsID < 320 {
+		b = append(b, uint8(chunk.Fmt<<6))
+		b = append(b, uint8(chunk.CsID-64))
+	} else {
+		b = append(b, uint8(chunk.Fmt<<6)|uint8(0x01))
+		b = append(b, uint8(0), uint8(0))
+		binary.BigEndian.PutUint16(b[len(b)-2:], uint16(chunk.CsID))
+	}
 	switch chunk.Fmt {
 	case FMT0:
 		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
@@ -199,3 +207,22 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	}
 	return easyerrors.HandleMultiError(easyerrors.Simple(), rtmp.conn.WriteFull(b), rtmp.conn.WriteFull(chunk.Payload))
 }
+
+// switch csid := b[0] & 0x3f; csid {
+// case 0x0:
+// b1, err := rtmp.conn.ReadN(1)
+// if err != nil {
+// return nil, err
+// }
+// cbhp.CsID = uint32(b1[0]) + 64
+// case 0x1:
+// b2, err := rtmp.conn.ReadN(2)
+// if err != nil {
+// return nil, err
+// }
+// cbhp.CsID = uint32(b2[0]) + uint32(b2[1])*256 + 64
+// case 0x2:
+// //XXX
+// default:
+// cbhp.CsID = uint32(csid)
+// }

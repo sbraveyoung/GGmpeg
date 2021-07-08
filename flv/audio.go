@@ -35,6 +35,11 @@ const (
 	SND_STEREO       = 1 //for AAC, always 1
 )
 
+const (
+	AAC_SEQUENCE_HEADER uint8 = 0
+	AAC_RAW                   = 1
+)
+
 type AudioTag struct {
 	TagBase
 	SoundFormat   uint8 //4bits
