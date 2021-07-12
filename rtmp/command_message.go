@@ -322,7 +322,7 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 			rIndex = len(b)
 			i = -2
 		}
-		NewChunk(COMMAND_MESSAGE_AMF0, fmt, 10, b[lIndex:rIndex]).Send(cmr.rtmp)
+		NewChunk(COMMAND_MESSAGE_AMF0, uint32(len(b)), fmt, 10, b[lIndex:rIndex]).Send(cmr.rtmp)
 	}
 	return nil
 }

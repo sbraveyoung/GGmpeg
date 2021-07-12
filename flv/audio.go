@@ -68,7 +68,7 @@ func ParseAudioTag(tb TagBase, b []byte) (audio *AudioTag, err error) {
 			return nil, errors.New("invalid audio format")
 		}
 		audio.AACPacketType = b[1]
-		audio.SoundData = audio.SoundData[1:]
+		audio.SoundData = b[2:]
 	}
 
 	return audio, nil

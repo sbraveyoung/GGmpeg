@@ -55,7 +55,7 @@ func (am *AudioMessage) Send() (err error) {
 			rIndex = len(am.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(am.messagePayload)), fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
 	}
 	return nil
 }

@@ -5,7 +5,7 @@ import (
 )
 
 const ( //frame_type
-	KEYFRAME                 uint8 = 1 //for AVC, a seekable frame
+	KEY_FRAME                uint8 = 1 //for AVC, a seekable frame
 	INTER_FRAME                    = 2 //for AVC, a non-seekable frame
 	DISPOSABLE_INTER_FRAME         = 3 //H.263 only
 	GENERATED_KEYFRAME             = 4 //reserved for server use only
@@ -23,9 +23,9 @@ const ( //codec_id
 )
 
 const ( //avc_packet_type
-	AVC_SEQUENCE_HEADER = 1
-	AVC_NALU            = 2
-	AVC_END_OF_SEQUENCE = 3
+	AVC_SEQUENCE_HEADER = 0
+	AVC_NALU            = 1
+	AVC_END_OF_SEQUENCE = 2
 )
 
 type VideoTag struct {
@@ -51,15 +51,11 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 
 	switch video.CodecID {
 	case JPEG, SORENSON_H263, SCREEN_VIDEO, ON2_VP6, ON2_VP6_WITH_ALPHA_CHANNEL, SCREEN_VIDEO_VERSION2:
-		//ignore
+	//ignore
 	case AVC:
 		video.AVCPacketType = b[1]
-		if video.AVCPacketType == AVC_NALU {
-			video.CompositionTime = uint32(0x00)<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
-			video.VideoData = video.VideoData[5:]
-		} else {
-			video.VideoData = video.VideoData[2:]
-		}
+		video.CompositionTime = uint32(0x00)<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
+		video.VideoData = b[5:]
 	}
 
 	return video, nil
@@ -74,9 +70,7 @@ func (vt *VideoTag) Marshal() (b []byte) {
 		//ignore
 	case AVC:
 		b = append(b, vt.AVCPacketType)
-		if vt.AVCPacketType == AVC_NALU {
-			b = append(b, uint8((vt.CompositionTime>>16)&0xff), uint8((vt.CompositionTime>>8)&0xff), uint8(vt.CompositionTime&0xff))
-		}
+		b = append(b, uint8((vt.CompositionTime>>16)&0xff), uint8((vt.CompositionTime>>8)&0xff), uint8(vt.CompositionTime&0xff))
 	}
 	b = append(b, vt.VideoData...)
 	return b

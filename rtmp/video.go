@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/SmartBrave/GGmpeg/flv"
 )
@@ -47,11 +46,16 @@ func NewVideoMessage(mb MessageBase, fields ...interface{}) (vm *VideoMessage) {
 	return vm
 }
 
+var (
+	rp []byte
+	sp []byte
+)
+
 func (vm *VideoMessage) Send() (err error) {
 	for i := 0; i >= 0; i++ {
-		fmt := FMT0
+		format := FMT0
 		if i != 0 {
-			fmt = FMT3
+			format = FMT3
 		}
 
 		lIndex := i * int(vm.rtmp.peerMaxChunkSize)
@@ -60,7 +64,7 @@ func (vm *VideoMessage) Send() (err error) {
 			rIndex = len(vm.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, fmt, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
 	}
 	return nil
 }
@@ -80,15 +84,15 @@ func (vm *VideoMessage) Parse() (err error) {
 }
 
 func (vm *VideoMessage) Do() (err error) {
-	if vm.videoTag.FrameType == flv.KEYFRAME && vm.videoTag.AVCPacketType == flv.AVC_SEQUENCE_HEADER {
+	if vm.videoTag.FrameType == flv.KEY_FRAME && vm.videoTag.AVCPacketType == flv.AVC_SEQUENCE_HEADER {
 		vm.rtmp.room.VideoSeq = vm.videoTag
-		fmt.Println(time.Now().Unix(), "1111111111111111111111111111111111111111111111")
+		rp = vm.messagePayload
+		fmt.Println("debug: assign to rp")
 		return nil
 	}
 
-	if vm.videoTag.FrameType == flv.KEYFRAME {
+	if vm.videoTag.FrameType == flv.KEY_FRAME {
 		vm.rtmp.room.GOP = vm.rtmp.room.GOP[0:0:cap(vm.rtmp.room.GOP)]
-		fmt.Println(time.Now().Unix(), "11111111111111111111111111111111111111111111112222222222222222222222222222222222222222")
 	}
 
 	vm.rtmp.room.GOP = append(vm.rtmp.room.GOP, vm.videoTag)

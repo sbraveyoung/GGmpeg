@@ -2,8 +2,6 @@ package rtmp
 
 import (
 	"encoding/binary"
-	"fmt"
-	"os"
 
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
@@ -28,7 +26,7 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("basic header:%x\n", b)
+	// fmt.Printf("basic header:%x\n", b)
 
 	cbhp = &ChunkBasicHeader{
 		Fmt: MessageHeaderType((b[0] & 0xc0) >> 6),
@@ -52,7 +50,7 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 	default:
 		cbhp.CsID = uint32(csid)
 	}
-	fmt.Printf("basic header struct:%+v\n", *cbhp)
+	// fmt.Printf("basic header struct:%+v\n", *cbhp)
 	return cbhp, nil
 }
 
@@ -112,7 +110,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		}
 		cmhp.MessageTimeStamp = binary.BigEndian.Uint32(b4)
 	}
-	fmt.Printf("message header struct:%+v\n", *cmhp)
+	// fmt.Printf("message header struct:%+v\n", *cmhp)
 	return cmhp, nil
 }
 
@@ -130,7 +128,6 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 
 	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader)
 	if err != nil {
-		os.Exit(1)
 		return nil, err
 	}
 
@@ -158,7 +155,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 }
 
 //NOTE: ensure len(payload) <= peerMaxChunkSize
-func NewChunk(messageType MessageType, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
+func NewChunk(messageType MessageType, messageLength uint32, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
 	return &Chunk{
 		ChunkBasicHeader: ChunkBasicHeader{
 			Fmt:  fmt,
@@ -166,7 +163,7 @@ func NewChunk(messageType MessageType, fmt MessageHeaderType, csid uint32, paylo
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
 			MessageTimeStamp: 0,
-			MessageLength:    uint32(len(payload)),
+			MessageLength:    messageLength,
 			MessageType:      messageType,
 			MessageStreamID:  0,
 		},

@@ -33,25 +33,12 @@ func NewRoom(roomID string) *Room {
 func (r *Room) Transmit() {
 	for {
 		<-r.ch
-		// fmt.Println("333333333333333333333333333333")
 
 		r.Players.Range(func(key, value interface{}) bool {
 			// peer, _ := key.(string)
 			rtmp, _ := value.(*RTMP)
 
-			// tas := r.AudioSeq.(*flv.AudioTag)
-			// tvs := r.VideoSeq.(*flv.VideoTag)
-
-			// fmt.Printf("1111111111111111111111,tas.TagBase:%+v, soundFormat:%d, soundRate:%d, soundSize:%d, soundType:%d, AACPacketType:%d.  tvs.TagBase:%+v, FrameType:%d, CodecID:%d, AVCPacketType:%d, CompositionTime:%d. ", tas.TagBase, tas.SoundFormat, tas.SoundRate, tas.SoundSize, tas.SoundType, tas.AACPacketType, tvs.TagBase, tvs.FrameType, tvs.CodecID, tvs.AVCPacketType, tvs.CompositionTime)
-			// if t, ok := tag.(*flv.AudioTag); ok {
-			// fmt.Printf("tag is audio. t.TagBase:%+v, soundFormat:%d, soundRate:%d, soundSize:%d, soundType:%d, AACPacketType:%d\n", t.TagBase, t.SoundFormat, t.SoundRate, t.SoundSize, t.SoundType, t.AACPacketType)
-			// } else if tv, ok := tag.(*flv.VideoTag); ok {
-			// fmt.Printf("tag is video. t.TagBase:%+v, FrameType:%d, CodecID:%d, AVCPacketType:%d, CompositionTime:%d\n", tv.TagBase, tv.FrameType, tv.CodecID, tv.AVCPacketType, tv.CompositionTime)
-			// } else {
-			// fmt.Printf("invalid type----------------------------\n")
-			// }
 			if !rtmp.start {
-				// fmt.Println("333333333333333333333333333333444444444444444444444444444")
 				var err1, err2, err3 error
 				err1 = NewDataMessage(MessageBase{
 					rtmp: rtmp,
@@ -69,7 +56,7 @@ func (r *Room) Transmit() {
 					messageType:      MessageType(r.VideoSeq.GetTagInfo().TagType),
 					messageStreamID:  0,
 				}, r.VideoSeq).Send()
-				// err3 = NewVideoMessage(MessageBase{
+				// err3 = NewAudioMessage(MessageBase{
 				// rtmp:             rtmp,
 				// messageTime:      r.AudioSeq.GetTagInfo().TimeStamp,
 				// messageTimeDelta: 0,
@@ -92,7 +79,7 @@ func (r *Room) Transmit() {
 							messageLength:    videoTag.GetTagInfo().DataSize,
 							messageType:      MessageType(videoTag.GetTagInfo().TagType),
 							messageStreamID:  0,
-						}, r.VideoSeq).Send()
+						}, videoTag).Send()
 						if err != nil {
 							fmt.Println("send video data error:", err)
 						}
@@ -102,7 +89,6 @@ func (r *Room) Transmit() {
 				return true
 			}
 
-			// fmt.Println("3333333333333333333333333333335555555555555555555555555555")
 			tag := r.GOP[len(r.GOP)-1]
 			mb := MessageBase{
 				rtmp:             rtmp,
@@ -112,13 +98,14 @@ func (r *Room) Transmit() {
 				messageType:      MessageType(tag.GetTagInfo().TagType),
 				messageStreamID:  0,
 			}
-			switch tag.GetTagInfo().TagType {
-			case AUDIO_MESSAGE:
-				NewAudioMessage(mb).Send()
-			case VIDEO_MESSAGE:
-				NewVideoMessage(mb).Send()
-			default:
-				//ignore
+			var err error
+			if _, oka := tag.(*flv.AudioTag); oka {
+				//TODO
+			} else if videoTag, okv := tag.(*flv.VideoTag); okv {
+				err = NewVideoMessage(mb, videoTag).Send()
+			}
+			if err != nil {
+				fmt.Println("send video data error:", err)
 			}
 			return true
 		})
