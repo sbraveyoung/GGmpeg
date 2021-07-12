@@ -2,6 +2,7 @@ package rtmp
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
@@ -56,6 +57,7 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 
 type ChunkMessageHeader struct {
 	MessageTimeStamp uint32 //3bytes or 4bytes(extended timestamp)
+	MessageTimeDelta uint32
 	MessageLength    uint32 //3bytes
 	MessageType      MessageType
 	MessageStreamID  uint32 //little-endian 4bytes
@@ -74,6 +76,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 			return nil, err
 		}
 		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
+		cmhp.MessageTimeDelta = 0
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
 		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
@@ -82,7 +85,9 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
+		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
+		cmhp.MessageTimeDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
+		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
 		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
@@ -91,12 +96,16 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
+		cmhp.MessageTimeDelta = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT3:
 		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
+		cmhp.MessageTimeDelta = rtmp.lastChunk[basicHeader.CsID].MessageTimeDelta
+		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
@@ -150,19 +159,23 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		ChunkMessageHeader: *messageHeader,
 		Payload:            b,
 	}
+
+	if messageHeader.MessageType == VIDEO_MESSAGE && basicHeader.Fmt == FMT1 {
+		fmt.Printf("debug, video fmt1 get last chunk's timestamp:%d, self time delta:%d\n", rtmp.lastChunk[cp.CsID].MessageTimeStamp, messageHeader.MessageTimeDelta)
+	}
 	rtmp.lastChunk[cp.CsID] = cp
 	return cp, nil
 }
 
 //NOTE: ensure len(payload) <= peerMaxChunkSize
-func NewChunk(messageType MessageType, messageLength uint32, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
+func NewChunk(messageType MessageType, messageLength uint32, messageTime uint32, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
 	return &Chunk{
 		ChunkBasicHeader: ChunkBasicHeader{
 			Fmt:  fmt,
 			CsID: csid,
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
-			MessageTimeStamp: 0,
+			MessageTimeStamp: messageTime,
 			MessageLength:    messageLength,
 			MessageType:      messageType,
 			MessageStreamID:  0,
@@ -204,22 +217,3 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	}
 	return easyerrors.HandleMultiError(easyerrors.Simple(), rtmp.conn.WriteFull(b), rtmp.conn.WriteFull(chunk.Payload))
 }
-
-// switch csid := b[0] & 0x3f; csid {
-// case 0x0:
-// b1, err := rtmp.conn.ReadN(1)
-// if err != nil {
-// return nil, err
-// }
-// cbhp.CsID = uint32(b1[0]) + 64
-// case 0x1:
-// b2, err := rtmp.conn.ReadN(2)
-// if err != nil {
-// return nil, err
-// }
-// cbhp.CsID = uint32(b2[0]) + uint32(b2[1])*256 + 64
-// case 0x2:
-// //XXX
-// default:
-// cbhp.CsID = uint32(csid)
-// }

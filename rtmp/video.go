@@ -64,10 +64,14 @@ func (vm *VideoMessage) Send() (err error) {
 			rIndex = len(vm.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
 	}
 	return nil
 }
+
+var (
+	index = 0
+)
 
 func (vm *VideoMessage) Parse() (err error) {
 	vm.videoTag, err = flv.ParseVideoTag(flv.TagBase{
@@ -80,6 +84,15 @@ func (vm *VideoMessage) Parse() (err error) {
 		return err
 	}
 
+	fmt.Printf("debug, frameType:%d, AVCPacketType:%d, codecID:%d, CompositionTime(pts):%d, messageTime(dts):%d\n", vm.videoTag.FrameType, vm.videoTag.AVCPacketType, vm.videoTag.CodecID, vm.videoTag.CompositionTime, vm.messageTime)
+
+	// if vm.videoTag.AVCPacketType != flv.AVC_SEQUENCE_HEADER {
+	// index++
+	// if index == 2 {
+	// os.Exit(1)
+	// }
+	// }
+
 	return nil
 }
 
@@ -87,7 +100,6 @@ func (vm *VideoMessage) Do() (err error) {
 	if vm.videoTag.FrameType == flv.KEY_FRAME && vm.videoTag.AVCPacketType == flv.AVC_SEQUENCE_HEADER {
 		vm.rtmp.room.VideoSeq = vm.videoTag
 		rp = vm.messagePayload
-		fmt.Println("debug: assign to rp")
 		return nil
 	}
 

@@ -55,17 +55,17 @@ func (am *AudioMessage) Send() (err error) {
 			rIndex = len(am.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, uint32(len(am.messagePayload)), fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
 	}
 	return nil
 }
 
 func (am *AudioMessage) Parse() (err error) {
 	am.audioTag, err = flv.ParseAudioTag(flv.TagBase{
-		TagType:   AUDIO_MESSAGE,
-		DataSize:  am.messageLength,
-		TimeStamp: am.messageTime,
-		StreamID:  0,
+		TagType:  AUDIO_MESSAGE,
+		DataSize: am.messageLength,
+		// TimeStamp: am.messageTime,
+		StreamID: 0,
 	}, am.messagePayload)
 	if err != nil {
 		return err
@@ -75,10 +75,10 @@ func (am *AudioMessage) Parse() (err error) {
 }
 
 func (am *AudioMessage) Do() (err error) {
-	// if am.audioTag.SoundFormat == flv.AAC && am.audioTag.AACPacketType == flv.AAC_SEQUENCE_HEADER {
-	// am.rtmp.room.AudioSeq = am.audioTag
-	// return nil
-	// }
-	// am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
+	if am.audioTag.SoundFormat == flv.AAC && am.audioTag.AACPacketType == flv.AAC_SEQUENCE_HEADER {
+		am.rtmp.room.AudioSeq = am.audioTag
+		return nil
+	}
+	am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
 	return nil
 }

@@ -26,7 +26,7 @@ func NewWindowAcknowledgeSizeMessage(mb MessageBase, fields ...interface{} /*win
 func (wasm *WindowAcknowledgeSizeMessage) Send() (err error) {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(wasm.AcknowledgementWindowSize))
-	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, 4, FMT0, 11, b).Send(wasm.rtmp)
+	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, 4, wasm.messageTime, FMT0, 11, b).Send(wasm.rtmp)
 }
 
 func (wasm *WindowAcknowledgeSizeMessage) Parse() (err error) {
@@ -74,7 +74,7 @@ func (spbwm *SetPeerBandWidthMessage) Send() (err error) {
 	b := make([]byte, 5)
 	binary.BigEndian.PutUint32(b, spbwm.AcknowledgementWindowSize)
 	b[4] = byte(spbwm.LimitType)
-	return NewChunk(SET_PEER_BANDWIDTH, 5, FMT0, 12, b).Send(spbwm.rtmp)
+	return NewChunk(SET_PEER_BANDWIDTH, 5, spbwm.messageTime, FMT0, 12, b).Send(spbwm.rtmp)
 }
 
 func (spbwm *SetPeerBandWidthMessage) Parse() (err error) {
@@ -137,7 +137,7 @@ func (ucm *UserControlMessage) Send() (err error) {
 		b = make([]byte, 4+2)
 		binary.BigEndian.PutUint16(b, uint16(ucm.EventType))
 		binary.BigEndian.PutUint32(b[2:], ucm.messageStreamID)
-		return NewChunk(USER_CONTROL_MESSAGE, 4+2, FMT0, 13, b).Send(ucm.rtmp)
+		return NewChunk(USER_CONTROL_MESSAGE, 4+2, ucm.messageTime, FMT0, 13, b).Send(ucm.rtmp)
 	case StreamEOF:
 	case StreamDry:
 	case SetBufferLength:

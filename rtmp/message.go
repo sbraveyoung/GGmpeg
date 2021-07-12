@@ -1,29 +1,30 @@
 package rtmp
 
 import (
+	"fmt"
+
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
 )
 
 type MessageBase struct {
-	rtmp             *RTMP
-	messageTime      uint32
-	messageTimeDelta uint32
-	messageLength    uint32
-	messageType      MessageType
-	messageStreamID  uint32
-	amf              amf_pkg.AMF
-	messagePayload   []byte //TODO: maybe using easyio.EasyReadWriter
+	rtmp            *RTMP
+	messageTime     uint32
+	messageLength   uint32
+	messageType     MessageType
+	messageStreamID uint32
+	amf             amf_pkg.AMF
+	messagePayload  []byte //TODO: maybe using easyio.EasyReadWriter
 }
 
 func (mb *MessageBase) GetInfo() *MessageBase {
 	return mb
 }
 
-func (mb *MessageBase) Update(mbNew *MessageBase) {
+func (mb *MessageBase) Update(time uint32) {
 	//do not update other fields
-	mb.messageTimeDelta = mbNew.messageTimeDelta
+	mb.messageTime = time
 }
 
 func (mb *MessageBase) Append(chunk *Chunk) {
@@ -44,7 +45,7 @@ type Message interface {
 	Remain() uint32
 	Done() bool
 	GetInfo() *MessageBase
-	Update(*MessageBase)
+	Update(uint32)
 
 	//Parse() parse binary data that receive from peer
 	Parse() error
@@ -118,11 +119,14 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			return err
 		}
 
+		if chunk.MessageType == VIDEO_MESSAGE {
+			fmt.Printf("debug, chunk fmt:%d, csID:%d, messageTime:%d\n", chunk.Fmt, chunk.CsID, chunk.MessageTimeStamp)
+		}
+
 		if message == nil {
 			mb := MessageBase{
-				rtmp:        rtmp,
-				messageTime: chunk.MessageTimeStamp,
-				// messageTimeDelta:0
+				rtmp:            rtmp,
+				messageTime:     chunk.MessageTimeStamp,
 				messageLength:   chunk.MessageLength,
 				messageType:     chunk.MessageType,
 				messageStreamID: chunk.MessageStreamID,
@@ -167,6 +171,8 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			default:
 				return errors.New("invalid message type")
 			}
+		} else {
+			message.Update(chunk.MessageTimeStamp)
 		}
 
 		message.Append(chunk)
@@ -175,5 +181,8 @@ func ParseMessage(rtmp *RTMP) (err error) {
 		}
 	}
 
+	if videoMessage, ok := message.(*VideoMessage); ok {
+		fmt.Printf("debug, video messageTime:%d, messageLength:%d, messageStreamID:%d\n", videoMessage.messageTime, videoMessage.messageLength, videoMessage.messageStreamID)
+	}
 	return easyerrors.HandleMultiError(easyerrors.Simple(), message.Parse(), message.Do())
 }

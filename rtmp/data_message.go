@@ -97,7 +97,7 @@ func (dm *DataMessage) Send() (err error) {
 			rIndex = len(b)
 			i = -2
 		}
-		NewChunk(DATA_MESSAGE_AMF0, uint32(len(b)), fmt, 6, b[lIndex:rIndex]).Send(dm.rtmp)
+		NewChunk(DATA_MESSAGE_AMF0, uint32(len(b)), dm.messageTime, fmt, 6, b[lIndex:rIndex]).Send(dm.rtmp)
 	}
 	return nil
 }
