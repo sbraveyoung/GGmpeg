@@ -1,8 +1,6 @@
 package rtmp
 
 import (
-	"fmt"
-
 	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
@@ -119,10 +117,6 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			return err
 		}
 
-		if chunk.MessageType == VIDEO_MESSAGE {
-			fmt.Printf("debug, chunk fmt:%d, csID:%d, messageTime:%d\n", chunk.Fmt, chunk.CsID, chunk.MessageTimeStamp)
-		}
-
 		if message == nil {
 			mb := MessageBase{
 				rtmp:            rtmp,
@@ -149,7 +143,7 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			case AUDIO_MESSAGE:
 				message = NewAudioMessage(mb)
 			case VIDEO_MESSAGE:
-				message = NewVideoMessage(mb)
+				message = NewVideoMessage(mb, "message", -2)
 
 			case DATA_MESSAGE_AMF3:
 				// mb.amf = amf_pkg.AMF3
@@ -181,8 +175,5 @@ func ParseMessage(rtmp *RTMP) (err error) {
 		}
 	}
 
-	if videoMessage, ok := message.(*VideoMessage); ok {
-		fmt.Printf("debug, video messageTime:%d, messageLength:%d, messageStreamID:%d\n", videoMessage.messageTime, videoMessage.messageLength, videoMessage.messageStreamID)
-	}
 	return easyerrors.HandleMultiError(easyerrors.Simple(), message.Parse(), message.Do())
 }

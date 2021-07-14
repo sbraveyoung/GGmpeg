@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
 )
 
@@ -159,19 +158,17 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		ChunkMessageHeader: *messageHeader,
 		Payload:            b,
 	}
+	fmt.Printf("debug, read chunk, messageLength:%d, chunkSize:%d, peerMaxChunkSize:%d, message==nil:%t, b:%x\n", messageHeader.MessageLength, chunkSize, rtmp.peerMaxChunkSize, message == nil, b)
 
-	if messageHeader.MessageType == VIDEO_MESSAGE && basicHeader.Fmt == FMT1 {
-		fmt.Printf("debug, video fmt1 get last chunk's timestamp:%d, self time delta:%d\n", rtmp.lastChunk[cp.CsID].MessageTimeStamp, messageHeader.MessageTimeDelta)
-	}
 	rtmp.lastChunk[cp.CsID] = cp
 	return cp, nil
 }
 
 //NOTE: ensure len(payload) <= peerMaxChunkSize
-func NewChunk(messageType MessageType, messageLength uint32, messageTime uint32, fmt MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
+func NewChunk(messageType MessageType, messageLength uint32, messageTime uint32, format MessageHeaderType, csid uint32, payload []byte) (chunk *Chunk) {
 	return &Chunk{
 		ChunkBasicHeader: ChunkBasicHeader{
-			Fmt:  fmt,
+			Fmt:  format,
 			CsID: csid,
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
@@ -215,5 +212,9 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	default:
 		return errors.Errorf("invalid fmt_c:%d", chunk.Fmt)
 	}
-	return easyerrors.HandleMultiError(easyerrors.Simple(), rtmp.conn.WriteFull(b), rtmp.conn.WriteFull(chunk.Payload))
+	b = append(b, chunk.Payload...)
+	if chunk.MessageType == VIDEO_MESSAGE || chunk.MessageType == DATA_MESSAGE_AMF0 {
+		fmt.Printf("debug, sendChunk length:%d, data:%x\n", len(b), b)
+	}
+	return rtmp.conn.WriteFull(b)
 }

@@ -2,6 +2,8 @@ package flv
 
 import (
 	"errors"
+	"fmt"
+	"time"
 )
 
 const ( //frame_type
@@ -56,6 +58,9 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 		video.AVCPacketType = b[1]
 		video.CompositionTime = uint32(0x00)<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
 		video.VideoData = b[5:]
+	default:
+		// XXX: could do better!
+		// panic(video.CodecID)
 	}
 
 	return video, nil
@@ -71,6 +76,10 @@ func (vt *VideoTag) Marshal() (b []byte) {
 	case AVC:
 		b = append(b, vt.AVCPacketType)
 		b = append(b, uint8((vt.CompositionTime>>16)&0xff), uint8((vt.CompositionTime>>8)&0xff), uint8(vt.CompositionTime&0xff))
+	default:
+		fmt.Println("vt.CodecID:", vt.CodecID)
+		time.Sleep(time.Second)
+		panic("video marshal panic")
 	}
 	b = append(b, vt.VideoData...)
 	return b

@@ -132,7 +132,7 @@ func (cm *CommandMessage) Parse() (err error) {
 
 func (cm *CommandMessage) Do() (err error) {
 
-	var err1, err2, err3, err4 error
+	var err1, err2, err3, err4, err5 error
 	switch cm.CommandName {
 	case CONNECT:
 		if _, ok := cm.rtmp.server.Apps[cm.CommandObject.App]; !ok {
@@ -141,9 +141,12 @@ func (cm *CommandMessage) Do() (err error) {
 		cm.rtmp.app = cm.CommandObject.App
 		err1 = NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
 		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
-		//XXX: can set peer chunk size here
-		err3 = NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
-		err4 = (&CommandMessageResponse{
+		//BUG: If do not set ownChunkSize or set ownChunkSize to other value, player maybe panic. But I don't know the reason.
+		// cm.rtmp.ownMaxChunkSize = 1048576
+		cm.rtmp.ownMaxChunkSize = 4096
+		err3 = NewSetChunkSizeMessage(cm.MessageBase, uint32(cm.rtmp.ownMaxChunkSize)).Send()
+		err4 = NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
+		err5 = (&CommandMessageResponse{
 			MessageBase:     cm.MessageBase,
 			CommandName:     cm.CommandName,
 			CommandRespName: _RESULT,
@@ -157,7 +160,7 @@ func (cm *CommandMessage) Do() (err error) {
 				// ObjectEncoding : 0,
 			},
 		}).Send()
-		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
 	case RELEASE_STREAM, FCPUBLISH: //ignore
 	case CALL:
 	case CLOSE:
@@ -251,7 +254,7 @@ func (cm *CommandMessage) Do() (err error) {
 				Description: "Start play notify",
 			},
 		}).Send()
-		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
 	case _RESULT:
 	case _ERROR:
 	default:
@@ -316,8 +319,8 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 			fmt = FMT3
 		}
 
-		lIndex := i * int(cmr.rtmp.peerMaxChunkSize)
-		rIndex := (i + 1) * int(cmr.rtmp.peerMaxChunkSize)
+		lIndex := i * int(cmr.rtmp.ownMaxChunkSize)
+		rIndex := (i + 1) * int(cmr.rtmp.ownMaxChunkSize)
 		if rIndex > len(b) {
 			rIndex = len(b)
 			i = -2

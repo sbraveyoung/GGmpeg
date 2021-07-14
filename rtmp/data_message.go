@@ -86,18 +86,19 @@ func (dm *DataMessage) Send() (err error) {
 	}
 
 	for i := 0; i >= 0; i++ {
-		fmt := FMT0
+		format := FMT0
 		if i != 0 {
-			fmt = FMT3
+			format = FMT3
 		}
 
-		lIndex := i * int(dm.rtmp.peerMaxChunkSize)
-		rIndex := (i + 1) * int(dm.rtmp.peerMaxChunkSize)
+		lIndex := i * int(dm.rtmp.ownMaxChunkSize)
+		rIndex := (i + 1) * int(dm.rtmp.ownMaxChunkSize)
 		if rIndex > len(b) {
 			rIndex = len(b)
 			i = -2
 		}
-		NewChunk(DATA_MESSAGE_AMF0, uint32(len(b)), dm.messageTime, fmt, 6, b[lIndex:rIndex]).Send(dm.rtmp)
+		fmt.Printf("debug, NewChunk index:meta, messageLength:%d, fmt:%d, left:%d, right:%d\n", len(b), format, lIndex, rIndex)
+		NewChunk(DATA_MESSAGE_AMF0, uint32(len(b)), dm.messageTime, format, 6, b[lIndex:rIndex]).Send(dm.rtmp)
 	}
 	return nil
 }

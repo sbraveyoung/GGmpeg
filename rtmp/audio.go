@@ -49,13 +49,14 @@ func (am *AudioMessage) Send() (err error) {
 			fmt = FMT3
 		}
 
-		lIndex := i * int(am.rtmp.peerMaxChunkSize)
-		rIndex := (i + 1) * int(am.rtmp.peerMaxChunkSize)
+		lIndex := i * int(am.rtmp.ownMaxChunkSize)
+		rIndex := (i + 1) * int(am.rtmp.ownMaxChunkSize)
 		if rIndex > len(am.messagePayload) {
 			rIndex = len(am.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		//NewChunk(AUDIO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		NewChunk(AUDIO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 4, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
 	}
 	return nil
 }
@@ -79,6 +80,6 @@ func (am *AudioMessage) Do() (err error) {
 		am.rtmp.room.AudioSeq = am.audioTag
 		return nil
 	}
-	am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
+	// am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
 	return nil
 }

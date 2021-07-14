@@ -189,8 +189,9 @@ func NewSetChunkSizeMessage(mb MessageBase, fields ...interface{} /*NewChunkSize
 }
 
 func (scsm *SetChunkSizeMessage) Send() error {
-	//TODO
-	return nil
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, uint32(scsm.NewChunkSize))
+	return NewChunk(SET_CHUNK_SIZE, 4, scsm.messageTime, FMT0, 11, b).Send(scsm.rtmp)
 }
 
 func (scsm *SetChunkSizeMessage) Parse() (err error) {

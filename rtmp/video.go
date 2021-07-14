@@ -29,11 +29,15 @@ const (
 type VideoMessage struct {
 	MessageBase
 	videoTag *flv.VideoTag
+	from     string
+	index    int
 }
 
-func NewVideoMessage(mb MessageBase, fields ...interface{}) (vm *VideoMessage) {
+func NewVideoMessage(mb MessageBase, from string, index int, fields ...interface{}) (vm *VideoMessage) {
 	vm = &VideoMessage{
 		MessageBase: mb,
+		from:        from,
+		index:       index,
 	}
 	if len(fields) == 1 {
 		var ok bool
@@ -46,32 +50,27 @@ func NewVideoMessage(mb MessageBase, fields ...interface{}) (vm *VideoMessage) {
 	return vm
 }
 
-var (
-	rp []byte
-	sp []byte
-)
-
 func (vm *VideoMessage) Send() (err error) {
+	// fmt.Printf("debug, send frameType:%d, AVCPacketType:%d, codecID:%d, messageTime(dts):%d, from:%s\n", vm.videoTag.FrameType, vm.videoTag.AVCPacketType, vm.videoTag.CodecID, vm.messageTime, vm.from)
+	fmt.Printf("debug, sendChunk all video data length:%d, data:%x\n", len(vm.messagePayload), vm.messagePayload)
 	for i := 0; i >= 0; i++ {
 		format := FMT0
 		if i != 0 {
 			format = FMT3
 		}
 
-		lIndex := i * int(vm.rtmp.peerMaxChunkSize)
-		rIndex := (i + 1) * int(vm.rtmp.peerMaxChunkSize)
+		lIndex := i * int(vm.rtmp.ownMaxChunkSize)
+		rIndex := (i + 1) * int(vm.rtmp.ownMaxChunkSize)
 		if rIndex > len(vm.messagePayload) {
 			rIndex = len(vm.messagePayload)
 			i = -2
 		}
-		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+		fmt.Printf("debug, NewChunk index:%d, messageLength:%d, fmt:%d, left:%d, right:%d\n", vm.index, len(vm.messagePayload), format, lIndex, rIndex)
+		// NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 6, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
 	}
 	return nil
 }
-
-var (
-	index = 0
-)
 
 func (vm *VideoMessage) Parse() (err error) {
 	vm.videoTag, err = flv.ParseVideoTag(flv.TagBase{
@@ -84,22 +83,12 @@ func (vm *VideoMessage) Parse() (err error) {
 		return err
 	}
 
-	fmt.Printf("debug, frameType:%d, AVCPacketType:%d, codecID:%d, CompositionTime(pts):%d, messageTime(dts):%d\n", vm.videoTag.FrameType, vm.videoTag.AVCPacketType, vm.videoTag.CodecID, vm.videoTag.CompositionTime, vm.messageTime)
-
-	// if vm.videoTag.AVCPacketType != flv.AVC_SEQUENCE_HEADER {
-	// index++
-	// if index == 2 {
-	// os.Exit(1)
-	// }
-	// }
-
 	return nil
 }
 
 func (vm *VideoMessage) Do() (err error) {
 	if vm.videoTag.FrameType == flv.KEY_FRAME && vm.videoTag.AVCPacketType == flv.AVC_SEQUENCE_HEADER {
 		vm.rtmp.room.VideoSeq = vm.videoTag
-		rp = vm.messagePayload
 		return nil
 	}
 
@@ -108,6 +97,6 @@ func (vm *VideoMessage) Do() (err error) {
 	}
 
 	vm.rtmp.room.GOP = append(vm.rtmp.room.GOP, vm.videoTag)
-	vm.rtmp.room.ch <- 1
+	vm.rtmp.room.ch <- vm.videoTag
 	return nil
 }

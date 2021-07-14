@@ -16,7 +16,7 @@ type Room struct {
 	AudioSeq  flv.Tag
 	VideoSeq  flv.Tag
 	GOP       []flv.Tag
-	ch        chan int
+	ch        chan flv.Tag
 }
 
 func NewRoom(roomID string) *Room {
@@ -24,7 +24,7 @@ func NewRoom(roomID string) *Room {
 		RoomID:  roomID,
 		Players: sync.Map{},
 		GOP:     make([]flv.Tag, 0, 1024),
-		ch:      make(chan int, 1024),
+		ch:      make(chan flv.Tag, 1024),
 	}
 	go r.Transmit()
 	return r
@@ -32,7 +32,8 @@ func NewRoom(roomID string) *Room {
 
 func (r *Room) Transmit() {
 	for {
-		<-r.ch
+		tag := <-r.ch
+		// <-r.ch
 
 		r.Players.Range(func(key, value interface{}) bool {
 			// peer, _ := key.(string)
@@ -41,8 +42,8 @@ func (r *Room) Transmit() {
 			if !rtmp.start {
 				var err1, err2, err3 error
 				err1 = NewDataMessage(MessageBase{
-					rtmp: rtmp,
-					// messageTime:      info.TimeStamp,
+					rtmp:        rtmp,
+					messageTime: r.Meta.messageTime,
 					// messageLength:    info.DataSize,
 					messageType:     MessageType(DATA_MESSAGE_AMF0),
 					messageStreamID: 0,
@@ -53,7 +54,7 @@ func (r *Room) Transmit() {
 					messageLength:   r.VideoSeq.GetTagInfo().DataSize,
 					messageType:     MessageType(r.VideoSeq.GetTagInfo().TagType),
 					messageStreamID: 0,
-				}, r.VideoSeq).Send()
+				}, "video sequence", -1, r.VideoSeq).Send()
 				// err3 = NewAudioMessage(MessageBase{
 				// rtmp:             rtmp,
 				// messageTime:      r.AudioSeq.GetTagInfo().TimeStamp,
@@ -65,7 +66,7 @@ func (r *Room) Transmit() {
 				if err != nil {
 					fmt.Println("send meta and av seq error:", err)
 				}
-				for _, tag := range r.GOP {
+				for index, tag := range r.GOP {
 					if audioTag, oka := tag.(*flv.AudioTag); false && oka {
 						err = NewAudioMessage(MessageBase{
 							rtmp:            rtmp,
@@ -81,7 +82,7 @@ func (r *Room) Transmit() {
 							messageLength:   videoTag.GetTagInfo().DataSize,
 							messageType:     MessageType(videoTag.GetTagInfo().TagType),
 							messageStreamID: 0,
-						}, videoTag).Send()
+						}, "gop", index, videoTag).Send()
 					}
 					if err != nil {
 						fmt.Println("send video data error:", err)
@@ -91,7 +92,6 @@ func (r *Room) Transmit() {
 				return true
 			}
 
-			tag := r.GOP[len(r.GOP)-1]
 			mb := MessageBase{
 				rtmp:            rtmp,
 				messageTime:     tag.GetTagInfo().TimeStamp,
@@ -103,7 +103,7 @@ func (r *Room) Transmit() {
 			if audioTag, oka := tag.(*flv.AudioTag); false && oka {
 				err = NewAudioMessage(mb, audioTag).Send()
 			} else if videoTag, okv := tag.(*flv.VideoTag); okv {
-				err = NewVideoMessage(mb, videoTag).Send()
+				err = NewVideoMessage(mb, "packet", -3, videoTag).Send()
 			}
 			if err != nil {
 				fmt.Println("send video data error:", err)
