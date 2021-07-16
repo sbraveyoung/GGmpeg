@@ -1,10 +1,11 @@
 # GGmpeg
 [GGmpeg](https://github.com/SmartBrave/GGmpeg) is a library that pays tribute to [FFmpeg](https://ffmpeg.org/) with [Go](https://golang.org/)!
+
 **NOTE**: GGmpeg is a wheel I made to implement various protocols of multimedia, there are still many problems to be solved. Please do not use it in production environments.
 
 ## Support
-[x] publish a stream with RTMP
-[x] play a stream with RTMP
+- [x] publish a stream with RTMP
+- [x] play a stream with RTMP
 
 ## Usage
 To start a RTMP server, you only need to write one line of code:
@@ -17,7 +18,7 @@ To start a RTMP server, you only need to write one line of code:
 ```
 
 ## TODO
-[] play a stream with HTTP-flv
-[] play a stream with HLS
-[] RTMP client
-[] more...
+- [] play a stream with HTTP-flv
+- [] play a stream with HLS
+- [] RTMP client
+- [] more...
