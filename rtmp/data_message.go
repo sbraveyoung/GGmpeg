@@ -15,8 +15,8 @@ import (
 )
 
 type MetaData struct {
-	AudioChannels   string  `mapstructure:"audiochannels"`
-	AudioCodecID    int     `mapstructure:"audiocodecid"`
+	AudioChannels   float64 `mapstructure:"audiochannels"`
+	AudioCodecID    string  `mapstructure:"audiocodecid"`
 	AudioDataRate   int     `mapstructure:"audiodatarate"`
 	AudioSampleRate int     `mapstructure:"audiosamplerate"`
 	AudioSampleSize int     `mapstructure:"audiosamplesize"`
@@ -34,7 +34,7 @@ type MetaData struct {
 	Profile         string  `mapstructure:"profile"`
 	Stereo          bool    `mapstructure:"stereo"`
 	Version         string  `mapstructure:"version"`
-	VideoCodecID    int     `mapstructure:"videocodecid"`
+	VideoCodecID    string  `mapstructure:"videocodecid"`
 	VideoDataRate   float64 `mapstructure:"videodatarate"`
 	Width           int     `mapstructure:"width"`
 }
@@ -97,7 +97,6 @@ func (dm *DataMessage) Send() (err error) {
 			rIndex = len(b)
 			i = -2
 		}
-		fmt.Printf("debug, NewChunk index:meta, messageLength:%d, fmt:%d, left:%d, right:%d\n", len(b), format, lIndex, rIndex)
 		NewChunk(DATA_MESSAGE_AMF0, uint32(len(b)), dm.messageTime, format, 6, b[lIndex:rIndex]).Send(dm.rtmp)
 	}
 	return nil

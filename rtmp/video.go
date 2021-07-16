@@ -1,8 +1,6 @@
 package rtmp
 
 import (
-	"fmt"
-
 	"github.com/SmartBrave/GGmpeg/flv"
 )
 
@@ -51,8 +49,6 @@ func NewVideoMessage(mb MessageBase, from string, index int, fields ...interface
 }
 
 func (vm *VideoMessage) Send() (err error) {
-	// fmt.Printf("debug, send frameType:%d, AVCPacketType:%d, codecID:%d, messageTime(dts):%d, from:%s\n", vm.videoTag.FrameType, vm.videoTag.AVCPacketType, vm.videoTag.CodecID, vm.messageTime, vm.from)
-	fmt.Printf("debug, sendChunk all video data length:%d, data:%x\n", len(vm.messagePayload), vm.messagePayload)
 	for i := 0; i >= 0; i++ {
 		format := FMT0
 		if i != 0 {
@@ -65,9 +61,7 @@ func (vm *VideoMessage) Send() (err error) {
 			rIndex = len(vm.messagePayload)
 			i = -2
 		}
-		fmt.Printf("debug, NewChunk index:%d, messageLength:%d, fmt:%d, left:%d, right:%d\n", vm.index, len(vm.messagePayload), format, lIndex, rIndex)
-		// NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
-		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 6, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
+		NewChunk(VIDEO_MESSAGE, uint32(len(vm.messagePayload)), vm.messageTime, format, 9, vm.messagePayload[lIndex:rIndex]).Send(vm.rtmp)
 	}
 	return nil
 }

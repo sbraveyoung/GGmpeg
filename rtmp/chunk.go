@@ -2,7 +2,6 @@ package rtmp
 
 import (
 	"encoding/binary"
-	"fmt"
 
 	"github.com/pkg/errors"
 )
@@ -158,7 +157,6 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		ChunkMessageHeader: *messageHeader,
 		Payload:            b,
 	}
-	fmt.Printf("debug, read chunk, messageLength:%d, chunkSize:%d, peerMaxChunkSize:%d, message==nil:%t, b:%x\n", messageHeader.MessageLength, chunkSize, rtmp.peerMaxChunkSize, message == nil, b)
 
 	rtmp.lastChunk[cp.CsID] = cp
 	return cp, nil
@@ -212,9 +210,5 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	default:
 		return errors.Errorf("invalid fmt_c:%d", chunk.Fmt)
 	}
-	b = append(b, chunk.Payload...)
-	if chunk.MessageType == VIDEO_MESSAGE || chunk.MessageType == DATA_MESSAGE_AMF0 {
-		fmt.Printf("debug, sendChunk length:%d, data:%x\n", len(b), b)
-	}
-	return rtmp.conn.WriteFull(b)
+	return rtmp.conn.WriteFull(append(b, chunk.Payload...))
 }
