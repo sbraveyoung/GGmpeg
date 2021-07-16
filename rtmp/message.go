@@ -1,7 +1,7 @@
 package rtmp
 
 import (
-	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	amf_pkg "github.com/SmartBrave/GGmpeg/amf"
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/pkg/errors"
 )

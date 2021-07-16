@@ -6,7 +6,7 @@ import (
 	"io"
 	"reflect"
 
-	amf_pkg "github.com/SmartBrave/GGmpeg/rtmp/amf"
+	amf_pkg "github.com/SmartBrave/GGmpeg/amf"
 	"github.com/SmartBrave/utils/easyerrors"
 	"github.com/SmartBrave/utils/easyio"
 	"github.com/fatih/structs"

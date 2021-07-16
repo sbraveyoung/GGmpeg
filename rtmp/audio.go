@@ -80,6 +80,7 @@ func (am *AudioMessage) Do() (err error) {
 		am.rtmp.room.AudioSeq = am.audioTag
 		return nil
 	}
-	// am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
+	am.rtmp.room.GOP = append(am.rtmp.room.GOP, am.audioTag)
+	am.rtmp.room.ch <- am.audioTag
 	return nil
 }

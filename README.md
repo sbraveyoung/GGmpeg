@@ -18,7 +18,7 @@ To start a RTMP server, you only need to write one line of code, see `./demo/rtm
 ```
 
 ## TODO
-- [  ] play a stream with HTTP-flv
-- [  ] play a stream with HLS
-- [  ] RTMP client
-- [  ] more...
+- [ ] play a stream with HTTP-flv
+- [ ] play a stream with HLS
+- [ ] RTMP client
+- [ ] more...

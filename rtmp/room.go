@@ -55,19 +55,19 @@ func (r *Room) Transmit() {
 					messageType:     MessageType(r.VideoSeq.GetTagInfo().TagType),
 					messageStreamID: 0,
 				}, "video sequence", -1, r.VideoSeq).Send()
-				// err3 = NewAudioMessage(MessageBase{
-				// rtmp:             rtmp,
-				// messageTime:      r.AudioSeq.GetTagInfo().TimeStamp,
-				// messageLength:    r.AudioSeq.GetTagInfo().DataSize,
-				// messageType:      MessageType(r.AudioSeq.GetTagInfo().TagType),
-				// messageStreamID:  0,
-				// }, r.AudioSeq).Send()
+				err3 = NewAudioMessage(MessageBase{
+					rtmp:            rtmp,
+					messageTime:     r.AudioSeq.GetTagInfo().TimeStamp,
+					messageLength:   r.AudioSeq.GetTagInfo().DataSize,
+					messageType:     MessageType(r.AudioSeq.GetTagInfo().TagType),
+					messageStreamID: 0,
+				}, r.AudioSeq).Send()
 				err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
 				if err != nil {
 					fmt.Println("send meta and av seq error:", err)
 				}
 				for index, tag := range r.GOP {
-					if audioTag, oka := tag.(*flv.AudioTag); false && oka {
+					if audioTag, oka := tag.(*flv.AudioTag); oka {
 						err = NewAudioMessage(MessageBase{
 							rtmp:            rtmp,
 							messageTime:     audioTag.GetTagInfo().TimeStamp,
@@ -100,7 +100,7 @@ func (r *Room) Transmit() {
 				messageStreamID: 0,
 			}
 			var err error
-			if audioTag, oka := tag.(*flv.AudioTag); false && oka {
+			if audioTag, oka := tag.(*flv.AudioTag); oka {
 				err = NewAudioMessage(mb, audioTag).Send()
 			} else if videoTag, okv := tag.(*flv.VideoTag); okv {
 				err = NewVideoMessage(mb, "packet", -3, videoTag).Send()
