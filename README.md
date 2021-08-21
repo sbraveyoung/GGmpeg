@@ -1,5 +1,3 @@
-# GGmpeg
-
 ```
   ____  ____                            
  / ___|/ ___|_ __ ___  _ __   ___  __ _ 
@@ -21,14 +19,15 @@
 - [ ] play a stream with HLS
 - [ ] RTMP client library
 - [ ] publish and play a stream with RTP
-- [ ] JPEG codec
-- [ ] H.264/AVC codec
-- [ ] webp codec
-- [ ] vp8 codec
-- [ ] vp9 codec
-- [ ] HEIF codec
-- [ ] H.265/HEVC codec
-- [ ] H.266/VVC codec
+- [ ] Image Codec
+  - [ ] JPEG
+  - [ ] webp
+  - [ ] HEIF
+- [ ] Video/Audio Codec
+  - [ ] H.264/AVC
+  - [ ] H.265/HEVC
+  - [ ] H.266/VVC
+  - [ ] vp8/vp9
 - [ ] more...
 
 ## Usage
