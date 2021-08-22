@@ -23,11 +23,13 @@
   - [ ] JPEG
   - [ ] webp
   - [ ] HEIF
+  - [ ] AVIF
 - [ ] Video/Audio Codec
   - [ ] H.264/AVC
   - [ ] H.265/HEVC
   - [ ] H.266/VVC
   - [ ] vp8/vp9
+  - [ ] AV1
 - [ ] more...
 
 ## Usage
