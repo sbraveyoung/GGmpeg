@@ -1,7 +1,7 @@
-github.com/SmartBrave/utils/easyerrors v0.0.0-20210412084923-be09977db1ed h1:6zZ05qATQaX7jbhkqKOfHq0BGDdkpV/zeSNfyvQX7Nc=
-github.com/SmartBrave/utils/easyerrors v0.0.0-20210412084923-be09977db1ed/go.mod h1:fEo2MFWMpGbHwxgtMtjkJ0eMfjlBbm5dwx5yr9VPwwM=
-github.com/SmartBrave/utils/easyio v0.0.0-20210507104310-64e368a0c24d h1:ji7rhKn7aBBqAOQeESQ4ggcQbRlq/ayjl2pOh1tCwrk=
-github.com/SmartBrave/utils/easyio v0.0.0-20210507104310-64e368a0c24d/go.mod h1:Co1AgfzGX7qnzuWeS1lzmskRcjPjhwpgXOhG+tf6LIo=
+github.com/SmartBrave/utils/easyerrors v0.0.0-20210713122451-7fadf9f7b19e h1:+z+8ef2x8zQnlskOWcRF66W+ddGW+aq7iqtvR/BgUUE=
+github.com/SmartBrave/utils/easyerrors v0.0.0-20210713122451-7fadf9f7b19e/go.mod h1:fEo2MFWMpGbHwxgtMtjkJ0eMfjlBbm5dwx5yr9VPwwM=
+github.com/SmartBrave/utils/easyio v0.0.0-20210713122451-7fadf9f7b19e h1:28mhqX++imMEniqLmUdZiaCG/aYBbSLwUKjvV45Is7I=
+github.com/SmartBrave/utils/easyio v0.0.0-20210713122451-7fadf9f7b19e/go.mod h1:Co1AgfzGX7qnzuWeS1lzmskRcjPjhwpgXOhG+tf6LIo=
 github.com/fatih/structs v1.1.0 h1:Q7juDM0QtcnhCpeyLGQKyg4TOIghuNXrkL32pHAUMxo=
 github.com/fatih/structs v1.1.0/go.mod h1:9NiDSp5zOcgEDl+j00MP/WkGVPOlPRLejGD8Ga6PJ7M=
 github.com/goinggo/mapstructure v0.0.0-20140717182941-194205d9b4a9 h1:wqckanyE9qc/XnvnybC6SHOb8Nyd62QXAZOzA8twFig=

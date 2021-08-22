@@ -21,7 +21,7 @@ type ChunkBasicHeader struct {
 }
 
 func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
-	b, err := rtmp.conn.ReadN(1)
+	b, err := rtmp.readerConn.ReadN(1)
 	if err != nil {
 		return nil, err
 	}
@@ -33,13 +33,13 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 
 	switch csid := b[0] & 0x3f; csid {
 	case 0x0:
-		b1, err := rtmp.conn.ReadN(1)
+		b1, err := rtmp.readerConn.ReadN(1)
 		if err != nil {
 			return nil, err
 		}
 		cbhp.CsID = uint32(b1[0]) + 64
 	case 0x1:
-		b2, err := rtmp.conn.ReadN(2)
+		b2, err := rtmp.readerConn.ReadN(2)
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +69,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 	cmhp = &ChunkMessageHeader{}
 	switch basicHeader.Fmt {
 	case FMT0:
-		b11, err := rtmp.conn.ReadN(11)
+		b11, err := rtmp.readerConn.ReadN(11)
 		if err != nil {
 			return nil, err
 		}
@@ -79,7 +79,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT1:
-		b7, err := rtmp.conn.ReadN(7)
+		b7, err := rtmp.readerConn.ReadN(7)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +90,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		cmhp.MessageType = MessageType(b7[6])
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT2:
-		b3, err := rtmp.conn.ReadN(3)
+		b3, err := rtmp.readerConn.ReadN(3)
 		if err != nil {
 			return nil, err
 		}
@@ -111,7 +111,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		return nil, errors.Errorf("invalid fmt_b:%d", basicHeader.Fmt)
 	}
 	if cmhp.MessageTimeStamp == 0xffffff {
-		b4, err := rtmp.conn.ReadN(4)
+		b4, err := rtmp.readerConn.ReadN(4)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +148,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		}
 	}
 	b := make([]byte, chunkSize)
-	err = rtmp.conn.ReadFull(b)
+	err = rtmp.readerConn.ReadFull(b)
 	if err != nil {
 		return nil, err
 	}
@@ -210,5 +210,5 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	default:
 		return errors.Errorf("invalid fmt_c:%d", chunk.Fmt)
 	}
-	return rtmp.conn.WriteFull(append(b, chunk.Payload...))
+	return rtmp.writerConn.WriteFull(append(b, chunk.Payload...))
 }

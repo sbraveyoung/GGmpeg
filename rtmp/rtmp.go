@@ -9,20 +9,23 @@ import (
 )
 
 type RTMP struct {
-	conn             easyio.EasyReadWriter
+	readerConn       easyio.EasyReader
+	writerConn       easyio.EasyWriter
 	lastChunk        map[uint32]*Chunk //csid
 	peerMaxChunkSize uint32
 	ownMaxChunkSize  int
 	peer             string
 	app              string
 	room             *Room
-	server           *Server
+	server           *server
 	start            bool
+	playType         string
 }
 
-func NewRTMP(conn net.Conn, peer string, server *Server) (rtmp *RTMP) {
+func NewRTMP(conn net.Conn, peer string, server *server) (rtmp *RTMP) {
 	return &RTMP{
-		conn:             easyio.NewEasyReadWriter(conn),
+		readerConn:       easyio.NewEasyReader(conn),
+		writerConn:       easyio.NewEasyWriter(conn),
 		lastChunk:        make(map[uint32]*Chunk),
 		peerMaxChunkSize: 128,
 		ownMaxChunkSize:  128,
@@ -39,7 +42,7 @@ func (rtmp *RTMP) HandlerServer() {
 	}
 
 	for {
-		// fmt.Println("-----------------------------------")
+		fmt.Println("-----------------------------------")
 		err = ParseMessage(rtmp)
 		if err == io.EOF {
 			fmt.Println("disconnect")

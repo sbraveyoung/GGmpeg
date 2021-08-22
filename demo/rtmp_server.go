@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	err := rtmp.NewServer(":1935", "live").Handler()
+	err := rtmp.NewServer(":1935", "live").WithHTTPFlv(":8080").Handler()
 	if err != nil {
 		fmt.Println("handle server error:", err)
 		return

@@ -84,7 +84,7 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	p := &Peer{
 		serverVersion: 3,
 	}
-	err = rtmp.conn.ReadFull(c0)
+	err = rtmp.readerConn.ReadFull(c0)
 	if err != nil {
 		return errors.Wrap(err, "read c0 from conn")
 	}
@@ -94,7 +94,7 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 		return errors.New("invalid client version")
 	}
 
-	err = rtmp.conn.ReadFull(c1)
+	err = rtmp.readerConn.ReadFull(c1)
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
@@ -105,26 +105,26 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 
 	p.parseC1(c1)
 
-	err = rtmp.conn.WriteFull(s0)
+	err = rtmp.writerConn.WriteFull(s0)
 	if err != nil {
 		return errors.Wrap(err, "write s0 to conn")
 	}
 
 	s1 := p.makeS1()
 	fmt.Printf("s1:len:%d, data: %x\n", len(s1), s1)
-	err = rtmp.conn.WriteFull(s1)
+	err = rtmp.writerConn.WriteFull(s1)
 	if err != nil {
 		return errors.Wrap(err, "write s1 to conn")
 	}
 
 	s2 := p.makeS2()
-	err = rtmp.conn.WriteFull(s2)
+	err = rtmp.writerConn.WriteFull(s2)
 	if err != nil {
 		return errors.Wrap(err, "write s2 to conn")
 	}
 	fmt.Printf("s2:%x\n", s2)
 
-	err = rtmp.conn.ReadFull(c2)
+	err = rtmp.readerConn.ReadFull(c2)
 	if err != nil {
 		return errors.Wrap(err, "read c2 from conn")
 	}

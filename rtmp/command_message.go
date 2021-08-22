@@ -135,7 +135,7 @@ func (cm *CommandMessage) Do() (err error) {
 	var err1, err2, err3, err4, err5 error
 	switch cm.CommandName {
 	case CONNECT:
-		if _, ok := cm.rtmp.server.Apps[cm.CommandObject.App]; !ok {
+		if _, ok := cm.rtmp.server.apps[cm.CommandObject.App]; !ok {
 			//TODO
 		}
 		cm.rtmp.app = cm.CommandObject.App
@@ -173,14 +173,12 @@ func (cm *CommandMessage) Do() (err error) {
 			StreamID:        cm.messageStreamID,
 		}).Send()
 	case PUBLISH:
-		if rooms, ok := cm.rtmp.server.Apps[cm.rtmp.app]; !ok {
+		if rooms, ok := cm.rtmp.server.apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
-			if room, ok := rooms.Load(cm.PublishingName); !ok {
+			if cm.rtmp.room = rooms.Load(cm.PublishingName); cm.rtmp.room == nil {
 				cm.rtmp.room = NewRoom(cm.PublishingName)
 				rooms.Store(cm.PublishingName, cm.rtmp.room)
-			} else {
-				cm.rtmp.room, _ = room.(*Room)
 			}
 			cm.rtmp.room.Publisher = cm.rtmp
 		}
@@ -197,15 +195,13 @@ func (cm *CommandMessage) Do() (err error) {
 			},
 		}).Send()
 	case PLAY:
-		if rooms, ok := cm.rtmp.server.Apps[cm.rtmp.app]; !ok {
+		if rooms, ok := cm.rtmp.server.apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
-			if room, ok := rooms.Load(cm.PublishingName); !ok {
+			if cm.rtmp.room = rooms.Load(cm.PublishingName); cm.rtmp.room == nil {
 				//XXX: return "room does not exist" is better?
 				cm.rtmp.room = NewRoom(cm.PublishingName)
 				rooms.Store(cm.PublishingName, cm.rtmp.room)
-			} else {
-				cm.rtmp.room, _ = room.(*Room)
 			}
 			cm.rtmp.room.Players.Store(cm.rtmp.peer, cm.rtmp)
 		}
