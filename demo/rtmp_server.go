@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/SmartBrave/GGmpeg/rtmp"
+	"github.com/SmartBrave/GGmpeg/librtmp"
 )
 
 func main() {
-	err := rtmp.NewServer(":1935", "live").WithHTTPFlv(":8080").Handler()
+	err := librtmp.NewServer(":1935", "live").WithHTTPFlv(":8080").Handler()
 	if err != nil {
 		fmt.Println("handle server error:", err)
 		return
