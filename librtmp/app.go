@@ -15,7 +15,10 @@ func NewApp(appName string) *App {
 }
 
 func (app *App) Load(roomID string) *Room {
-	room, _ := app.rooms.Load(roomID)
+	room, ok := app.rooms.Load(roomID)
+	if !ok {
+		return nil
+	}
 	return room.(*Room)
 }
 

@@ -63,14 +63,16 @@ func (s *server) Handler() error {
 	}
 	wg.Wait()
 
+	var err1, err2 error
 	tcpAddr, err1 := net.ResolveTCPAddr("tcp", s.rtmpAddress)
 	rtmpListener, err2 := net.ListenTCP("tcp", tcpAddr)
 	if err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2); err != nil {
 		return err
 	}
+
 	for {
 		conn, err1 := rtmpListener.AcceptTCP()
-		err2 := conn.SetNoDelay(true)
+		//err2 = conn.SetNoDelay(true)
 		if err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2); err != nil {
 			fmt.Println("error:", err)
 			continue
