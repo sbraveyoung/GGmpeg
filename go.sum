@@ -2,8 +2,8 @@ github.com/SmartBrave/utils_sb/easyerrors v0.0.0-20210825075645-c8b267ef1b7b h1:
 github.com/SmartBrave/utils_sb/easyerrors v0.0.0-20210825075645-c8b267ef1b7b/go.mod h1:JKYcDfgQv9m+vHtqe9POAWkF9sKRD3IA9qp0nh4rR9Y=
 github.com/SmartBrave/utils_sb/easyio v0.0.0-20210826042918-741b093c9319 h1:h1wa5rddl2YcvHS8PG/kM0RHdQ/wRyT+5kH/bzHOlzs=
 github.com/SmartBrave/utils_sb/easyio v0.0.0-20210826042918-741b093c9319/go.mod h1:TqMraN2mnsub5ZJgOZq01E0Fy7peLgTKYk64qHzHC9w=
-github.com/SmartBrave/utils_sb/gop v0.0.0-20210825115506-fc11f0a35758 h1:SDqsbcFcjXB8y3OIY8fjF5X0zNSe7gkItaDAuo6ZbI0=
-github.com/SmartBrave/utils_sb/gop v0.0.0-20210825115506-fc11f0a35758/go.mod h1:lSWAkp+NemFjtGI/8gvc96Un9bRZIMiFO6QPk04YBIc=
+github.com/SmartBrave/utils_sb/gop v0.0.0-20210826052649-a805e59d176b h1:GGI0aqkMqufTO9vX7J2MFoz3mlvQUxj/NlZ9bpuEwck=
+github.com/SmartBrave/utils_sb/gop v0.0.0-20210826052649-a805e59d176b/go.mod h1:lSWAkp+NemFjtGI/8gvc96Un9bRZIMiFO6QPk04YBIc=
 github.com/fatih/structs v1.1.0 h1:Q7juDM0QtcnhCpeyLGQKyg4TOIghuNXrkL32pHAUMxo=
 github.com/fatih/structs v1.1.0/go.mod h1:9NiDSp5zOcgEDl+j00MP/WkGVPOlPRLejGD8Ga6PJ7M=
 github.com/goinggo/mapstructure v0.0.0-20140717182941-194205d9b4a9 h1:wqckanyE9qc/XnvnybC6SHOb8Nyd62QXAZOzA8twFig=
