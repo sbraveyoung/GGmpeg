@@ -4,46 +4,17 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"reflect"
 
 	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/SmartBrave/GGmpeg/libflv"
 	"github.com/SmartBrave/utils_sb/easyerrors"
 	"github.com/SmartBrave/utils_sb/easyio"
 	"github.com/fatih/structs"
-	"github.com/goinggo/mapstructure"
-	"github.com/pkg/errors"
 )
-
-type MetaData struct {
-	AudioChannels   float64 `mapstructure:"audiochannels"`
-	AudioCodecID    string  `mapstructure:"audiocodecid"`
-	AudioDataRate   int     `mapstructure:"audiodatarate"`
-	AudioSampleRate int     `mapstructure:"audiosamplerate"`
-	AudioSampleSize int     `mapstructure:"audiosamplesize"`
-	Author          string  `mapstructure:"author"`
-	Company         string  `mapstructure:"company"`
-	DisplayHeight   string  `mapstructure:"displayheight"`
-	DisplayWidth    string  `mapstructure:"displaywidth"`
-	Duration        int     `mapstructure:"duration"`
-	Encoder         string  `mapstructure:"encoder"`
-	FileSize        int     `mapstructure:"filesize"`
-	Fps             string  `mapstructure:"fps"`
-	FrameRate       int     `mapstructure:"framerate"`
-	Height          int     `mapstructure:"height"`
-	Level           string  `mapstructure:"level"`
-	Profile         string  `mapstructure:"profile"`
-	Stereo          bool    `mapstructure:"stereo"`
-	Version         string  `mapstructure:"version"`
-	VideoCodecID    string  `mapstructure:"videocodecid"`
-	VideoDataRate   float64 `mapstructure:"videodatarate"`
-	Width           int     `mapstructure:"width"`
-}
 
 type DataMessage struct {
 	MessageBase
-	FirstField  string
-	SecondField string
-	MetaData    MetaData
+	metaTag *libflv.MetaTag
 }
 
 func NewDataMessage(mb MessageBase, fields ...interface{}) (dm *DataMessage) {
@@ -51,28 +22,24 @@ func NewDataMessage(mb MessageBase, fields ...interface{}) (dm *DataMessage) {
 		MessageBase: mb,
 	}
 
-	if len(fields) == 3 {
+	if len(fields) == 1 {
 		var ok bool
-		if dm.FirstField, ok = fields[0].(string); !ok {
-			dm.FirstField = ""
-		}
-		if dm.SecondField, ok = fields[1].(string); !ok {
-			dm.SecondField = ""
-		}
-		if dm.MetaData, ok = fields[2].(MetaData); !ok {
+		if dm.metaTag, ok = fields[0].(*libflv.MetaTag); !ok {
+			//TODO
 		}
 	}
 	return dm
 }
 
 func (dm *DataMessage) Send() (err error) {
+	//TODO
 	buf := bytes.NewBuffer([]byte{})
 	writer := easyio.NewEasyWriter(buf)
 	amf := libamf.AMF0
 
-	err1 := amf.Encode(writer, dm.FirstField)
-	err2 := amf.Encode(writer, dm.SecondField)
-	err3 := amf.Encode(writer, structs.Map(dm.MetaData))
+	err1 := amf.Encode(writer, dm.metaTag.FirstField)
+	err2 := amf.Encode(writer, dm.metaTag.SecondField)
+	err3 := amf.Encode(writer, structs.Map(dm.metaTag))
 	err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
 	if err != nil {
 		fmt.Println("HandleMultiError error:", err)
@@ -103,26 +70,18 @@ func (dm *DataMessage) Send() (err error) {
 }
 
 func (dm *DataMessage) Parse() (err error) {
-	var array []interface{}
-	array, err = dm.amf.Decode(easyio.NewEasyReader(bytes.NewReader(dm.messagePayload)))
-	if err != nil {
-		return err
-	}
-
-	for index, a := range array {
-		fmt.Println("index:", index, " a.type:", reflect.TypeOf(a), " a.Value:", reflect.ValueOf(a))
-	}
-
-	dm.FirstField = array[0].(string)
-	dm.SecondField = array[1].(string)
-	err = mapstructure.Decode(array[2], &dm.MetaData)
-	if err != nil {
-		return errors.Wrap(err, "mapstructure.Decode")
-	}
-	return nil
+	dm.metaTag, err = libflv.ParseMetaTag(libflv.TagBase{
+		TagType:   libflv.SCRIPT_DATA_TAG,
+		DataSize:  dm.messageLength,
+		TimeStamp: dm.messageTime,
+		StreamID:  0,
+	}, dm.amf, dm.messagePayload)
+	return err
 }
 
 func (dm *DataMessage) Do() (err error) {
-	dm.rtmp.room.Meta = dm
+	dm.rtmp.room.MetaMutex.Lock()
+	dm.rtmp.room.Meta = dm.metaTag
+	dm.rtmp.room.MetaMutex.Unlock()
 	return nil
 }

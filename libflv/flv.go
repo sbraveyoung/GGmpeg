@@ -7,6 +7,12 @@ import (
 	"github.com/SmartBrave/utils_sb/easyio"
 )
 
+const (
+	AUDIO_TAG       = 8
+	VIDEO_TAG       = 9
+	SCRIPT_DATA_TAG = 18
+)
+
 type FLVHeader struct {
 	Version        int8
 	TypeFlagsAudio bool

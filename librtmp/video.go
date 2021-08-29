@@ -1,6 +1,9 @@
 package librtmp
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/SmartBrave/GGmpeg/libflv"
 )
 
@@ -32,8 +35,6 @@ type VideoMessage struct {
 func NewVideoMessage(mb MessageBase, fields ...interface{}) (vm *VideoMessage) {
 	vm = &VideoMessage{
 		MessageBase: mb,
-		//from:        from,
-		//index:       index,
 	}
 	if len(fields) == 1 {
 		var ok bool
@@ -66,28 +67,29 @@ func (vm *VideoMessage) Send() (err error) {
 
 func (vm *VideoMessage) Parse() (err error) {
 	vm.videoTag, err = libflv.ParseVideoTag(libflv.TagBase{
-		TagType:   VIDEO_MESSAGE,
+		TagType:   libflv.VIDEO_TAG,
 		DataSize:  vm.messageLength,
 		TimeStamp: vm.messageTime,
 		StreamID:  0,
 	}, vm.messagePayload)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (vm *VideoMessage) Do() (err error) {
 	if vm.videoTag.FrameType == libflv.KEY_FRAME && vm.videoTag.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
+		vm.rtmp.room.VideoSeqMutex.Lock()
 		vm.rtmp.room.VideoSeq = vm.videoTag
+		vm.rtmp.room.VideoSeqMutex.Unlock()
 		return nil
 	}
 
 	if vm.videoTag.FrameType == libflv.KEY_FRAME {
+		fmt.Printf("[gop reset], now:%v\n", time.Now())
 		vm.rtmp.room.GOP.Reset()
 	}
 
+	//pts=dts+cts
+	fmt.Printf("[gop receive video] message time(dts):%d, componsition time(cts):%d, now:%+v\n", vm.messageTime, vm.videoTag.CompositionTime, time.Now())
 	vm.rtmp.room.GOP.Write(vm.videoTag)
 	return nil
 }

@@ -175,5 +175,6 @@ func ParseMessage(rtmp *RTMP) (err error) {
 		}
 	}
 
+	//	fmt.Printf("[message] --------------- type:%d, timestamp:%d\n", message.GetInfo().messageType, message.GetInfo().messageTime)
 	return easyerrors.HandleMultiError(easyerrors.Simple(), message.Parse(), message.Do())
 }

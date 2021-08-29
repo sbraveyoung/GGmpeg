@@ -1,6 +1,9 @@
 package librtmp
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/SmartBrave/GGmpeg/libflv"
 )
 
@@ -63,23 +66,22 @@ func (am *AudioMessage) Send() (err error) {
 
 func (am *AudioMessage) Parse() (err error) {
 	am.audioTag, err = libflv.ParseAudioTag(libflv.TagBase{
-		TagType:  AUDIO_MESSAGE,
-		DataSize: am.messageLength,
-		// TimeStamp: am.messageTime,
-		StreamID: 0,
+		TagType:   libflv.AUDIO_TAG,
+		DataSize:  am.messageLength,
+		TimeStamp: am.messageTime,
+		StreamID:  0,
 	}, am.messagePayload)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (am *AudioMessage) Do() (err error) {
 	if am.audioTag.SoundFormat == libflv.AAC && am.audioTag.AACPacketType == libflv.AAC_SEQUENCE_HEADER {
+		am.rtmp.room.AudioSeqMutex.Lock()
 		am.rtmp.room.AudioSeq = am.audioTag
+		am.rtmp.room.AudioSeqMutex.Unlock()
 		return nil
 	}
+	fmt.Printf("[gop receive audio] message time(dts):%d, now:%+v\n", am.messageTime, time.Now())
 	am.rtmp.room.GOP.Write(am.audioTag)
 	return nil
 }

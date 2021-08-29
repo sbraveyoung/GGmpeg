@@ -103,16 +103,7 @@ func (s *server) handleHTTPFlv(wg *sync.WaitGroup) error {
 		} else {
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "video/x-flv")
-			_, _ = w.Write([]byte{0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
-			//XXX maybe implement a writer with flv
-			room.Players.Store(r.RemoteAddr, RTMP{
-				writerConn: easyio.NewEasyWriter(w),
-				peer:       r.RemoteAddr,
-				app:        appName,
-				room:       room,
-				server:     s,
-				playType:   "flv",
-			})
+			room.FLVJoin(easyio.NewEasyWriter(w))
 		}
 	})
 	wg.Done()

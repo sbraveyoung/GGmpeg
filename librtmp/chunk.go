@@ -2,6 +2,7 @@ package librtmp
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/pkg/errors"
 )
@@ -61,7 +62,7 @@ type ChunkMessageHeader struct {
 	MessageStreamID  uint32 //little-endian 4bytes
 }
 
-func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *ChunkMessageHeader, err error) {
+func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader, firstChunkinMessage bool) (cmhp *ChunkMessageHeader, err error) {
 	if basicHeader.Fmt != FMT0 && rtmp.lastChunk[basicHeader.CsID] == nil {
 		return nil, errors.Errorf("invalid fmt_a:%d", basicHeader.Fmt)
 	}
@@ -103,10 +104,16 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 	case FMT3:
 		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
 		cmhp.MessageTimeDelta = rtmp.lastChunk[basicHeader.CsID].MessageTimeDelta
-		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
+		//NOTE: 2 cases with FMT3
+		//1. A single message is split into chunks, all chunks of a message except the first one SHOULD use this type.
+		//2. A stream consisting of messages of exactly the same size, stream ID and spacing in time SHOULD use this type for all chunks after a chunk of Type 2.
+		if firstChunkinMessage {
+			cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
+		} else {
+		}
 	default:
 		return nil, errors.Errorf("invalid fmt_b:%d", basicHeader.Fmt)
 	}
@@ -117,6 +124,7 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader) (cmhp *C
 		}
 		cmhp.MessageTimeStamp = binary.BigEndian.Uint32(b4)
 	}
+	fmt.Printf("[message] chunk fmt:%d, csid:%d, firstChuninMessage:%t, messageType:%d, timeStampDelta:%d, timeStamp:%d\n", basicHeader.Fmt, basicHeader.CsID, firstChunkinMessage, cmhp.MessageType, cmhp.MessageTimeDelta, cmhp.MessageTimeStamp)
 	// fmt.Printf("message header struct:%+v\n", *cmhp)
 	return cmhp, nil
 }
@@ -133,7 +141,7 @@ func ParseChunk(rtmp *RTMP, message Message) (cp *Chunk, err error) {
 		return nil, err
 	}
 
-	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader)
+	messageHeader, err := parseChunkMessageHeader(rtmp, basicHeader, message == nil)
 	if err != nil {
 		return nil, err
 	}

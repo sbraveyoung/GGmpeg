@@ -203,7 +203,7 @@ func (cm *CommandMessage) Do() (err error) {
 			if cm.rtmp.room = rooms.Load(cm.PublishingName); cm.rtmp.room == nil {
 				//TODO: return "room does not exist"
 			} else {
-				cm.rtmp.room.Join(cm.rtmp)
+				cm.rtmp.room.RTMPJoin(cm.rtmp)
 			}
 		}
 

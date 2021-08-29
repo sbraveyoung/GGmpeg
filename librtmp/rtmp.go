@@ -6,7 +6,6 @@ import (
 	"net"
 
 	"github.com/SmartBrave/utils_sb/easyio"
-	"github.com/SmartBrave/utils_sb/gop"
 )
 
 type RTMP struct {
@@ -20,7 +19,6 @@ type RTMP struct {
 	room             *Room
 	server           *server
 	playType         string
-	gopReader        *gop.GOPReader //only for player
 }
 
 func NewRTMP(conn net.Conn, peer string, server *server) (rtmp *RTMP) {
@@ -44,7 +42,7 @@ func (rtmp *RTMP) HandlerServer() {
 	fmt.Println("handshake done...")
 
 	for {
-		fmt.Println("-----------------------------------")
+		//fmt.Println("-----------------------------------")
 		err = ParseMessage(rtmp)
 		if err == io.EOF {
 			fmt.Println("disconnect")
