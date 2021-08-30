@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/SmartBrave/utils_sb/broadcast"
 	"github.com/SmartBrave/utils_sb/easyerrors"
 	"github.com/SmartBrave/utils_sb/easyio"
-	"github.com/SmartBrave/utils_sb/gop"
 )
 
 type Room struct {
@@ -22,7 +22,7 @@ type Room struct {
 	MetaMutex     sync.RWMutex
 	AudioSeqMutex sync.RWMutex
 	VideoSeqMutex sync.RWMutex
-	GOP           *gop.GOP
+	GOP           *broadcast.Broadcast
 }
 
 //NOTE: the room must be created by publisher
@@ -31,7 +31,7 @@ func NewRoom(rtmp *RTMP, roomID string) *Room {
 		RoomID:    roomID,
 		Publisher: rtmp,
 		//Players:   sync.Map{},
-		GOP: gop.NewGOP(),
+		GOP: broadcast.NewBroadcast(),
 	}
 	return r
 }
@@ -39,7 +39,7 @@ func NewRoom(rtmp *RTMP, roomID string) *Room {
 //player join the room
 func (room *Room) RTMPJoin(rtmp *RTMP) {
 	//room.Players.Store(rtmp.peer, rtmp)
-	gopReader := gop.NewGOPReader(room.GOP)
+	gopReader := broadcast.NewBroadcastReader(room.GOP)
 
 	go func() {
 		var err1, err2, err3 error
@@ -114,7 +114,7 @@ func (room *Room) RTMPJoin(rtmp *RTMP) {
 
 func (room *Room) FLVJoin(writer easyio.EasyWriter) {
 	writer.Write([]byte{0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
-	gopReader := gop.NewGOPReader(room.GOP)
+	gopReader := broadcast.NewBroadcastReader(room.GOP)
 	var writedSize uint32 = 11
 	var b []byte
 	writedSizeByte := make([]byte, 4, 4)
