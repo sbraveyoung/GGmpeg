@@ -27,7 +27,7 @@ To start a RTMP server, you only need to write one line of code, see `./demo/rtm
  //...
 ```
 
-Then you can publish a stream to addr: `rtmp://localhost:1935/live/${liveid}` with any RTMP publish tools such as [OBS](https://obsproject.com/), [FFmpeg](https://ffmpeg.org/) and so on, and play it from addr: `rtmp://localhost:1935/live/${liveid}` with any RTMP play tools you wanted.
+Then you can publish a stream to addr: `rtmp://localhost:1935/live/${liveid}` with any RTMP publish tools such as [OBS](https://obsproject.com/), [FFmpeg](https://ffmpeg.org/) and so on, and play it from addr: `rtmp://localhost:1935/live/${liveid}` with any RTMP play tools you want.
 
 To support HTTP-flv, you need to invoke `WithHTTPFlv()` methods:
 ```go
