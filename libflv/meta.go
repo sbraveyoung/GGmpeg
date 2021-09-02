@@ -2,39 +2,43 @@ package libflv
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 
 	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/SmartBrave/utils_sb/easyerrors"
 	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"
 )
 
 type MetaTag struct {
-	TagBase
-	FirstField      string
-	SecondField     string
-	AudioChannels   float64 `mapstructure:"audiochannels"`
-	AudioCodecID    string  `mapstructure:"audiocodecid"`
-	AudioDataRate   int     `mapstructure:"audiodatarate"`
-	AudioSampleRate int     `mapstructure:"audiosamplerate"`
-	AudioSampleSize int     `mapstructure:"audiosamplesize"`
-	Author          string  `mapstructure:"author"`
-	Company         string  `mapstructure:"company"`
-	DisplayHeight   string  `mapstructure:"displayheight"`
-	DisplayWidth    string  `mapstructure:"displaywidth"`
-	Duration        int     `mapstructure:"duration"`
-	Encoder         string  `mapstructure:"encoder"`
-	FileSize        int     `mapstructure:"filesize"`
-	Fps             string  `mapstructure:"fps"`
-	FrameRate       int     `mapstructure:"framerate"`
-	Height          int     `mapstructure:"height"`
-	Level           string  `mapstructure:"level"`
-	Profile         string  `mapstructure:"profile"`
-	Stereo          bool    `mapstructure:"stereo"`
-	Version         string  `mapstructure:"version"`
-	VideoCodecID    string  `mapstructure:"videocodecid"`
-	VideoDataRate   float64 `mapstructure:"videodatarate"`
-	Width           int     `mapstructure:"width"`
+	TagBase         `structs:"-"`
+	FirstField      string  `structs:"-"`
+	SecondField     string  `structs:"-"`
+	AudioChannels   float64 `mapstructure:"audiochannels" structs:"audiochannels"`
+	AudioCodecID    string  `mapstructure:"audiocodecid" structs:"audiocodecid"`
+	AudioDataRate   int     `mapstructure:"audiodatarate" structs:"audiodatarate"`
+	AudioSampleRate int     `mapstructure:"audiosamplerate" structs:"audiosamplerate"`
+	AudioSampleSize int     `mapstructure:"audiosamplesize" structs:"audiosamplesize"`
+	Author          string  `mapstructure:"author" structs:"author"`
+	Company         string  `mapstructure:"company" structs:"company"`
+	DisplayHeight   string  `mapstructure:"displayheight" structs:"displayheight"`
+	DisplayWidth    string  `mapstructure:"displaywidth" structs:"displaywidth"`
+	Duration        int     `mapstructure:"duration" structs:"duration"`
+	Encoder         string  `mapstructure:"encoder" structs:"encoder"`
+	FileSize        int     `mapstructure:"filesize" structs:"filesize"`
+	Fps             string  `mapstructure:"fps" structs:"fps"`
+	FrameRate       int     `mapstructure:"framerate" structs:"framerate"`
+	Height          int     `mapstructure:"height" structs:"height"`
+	Level           string  `mapstructure:"level" structs:"level"`
+	Profile         string  `mapstructure:"profile" structs:"profile"`
+	Stereo          bool    `mapstructure:"stereo" structs:"stereo"`
+	Version         string  `mapstructure:"version" structs:"version"`
+	VideoCodecID    string  `mapstructure:"videocodecid" structs:"videocodecid"`
+	VideoDataRate   float64 `mapstructure:"videodatarate" structs:"videodatarate"`
+	Width           int     `mapstructure:"width" structs:"width"`
 }
 
 func ParseMetaTag(tb TagBase, amf libamf.AMF, b []byte) (meta *MetaTag, err error) {
@@ -63,5 +67,23 @@ func ParseMetaTag(tb TagBase, amf libamf.AMF, b []byte) (meta *MetaTag, err erro
 }
 
 func (mt *MetaTag) Marshal() (b []byte) {
+	buf := bytes.NewBuffer([]byte{})
+	writer := easyio.NewEasyWriter(buf)
+	amf := libamf.AMF0
+
+	var err1, err2, err3 error
+	//err1 = amf.Encode(writer, mt.FirstField)
+	err2 = amf.Encode(writer, mt.SecondField)
+	err3 = amf.Encode(writer, structs.Map(mt))
+	err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
+	if err != nil {
+		fmt.Println("HandleMultiError error:", err)
+		return nil
+	}
+
+	b, err = io.ReadAll(buf)
+	if err != nil {
+		return nil
+	}
 	return b
 }

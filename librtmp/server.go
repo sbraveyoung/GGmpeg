@@ -101,8 +101,14 @@ func (s *server) handleHTTPFlv(wg *sync.WaitGroup) error {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		} else {
-			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "video/x-flv")
+			//w.Header().Set("Access-Control-Allow-Methods", "GET,OPTIONS,HEAD")
+			//w.Header().Set("Access-Control-Allow-Origin", "*")
+			//w.Header().Set("Connection", "close")
+			//w.Header().Set("Cache-Control", "no-cache")
+			//w.Header().Set("Expires", "-1")
+			//w.Header().Set("Pragma", "no-cache")
+			//w.Header().Set("Date", time.Now().Format(""))
 			room.FLVJoin(easyio.NewEasyWriter(w))
 		}
 	})

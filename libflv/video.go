@@ -67,9 +67,7 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 }
 
 func (vt *VideoTag) Marshal() (b []byte) {
-	b = make([]byte, 0, 1)
-
-	b = append(b, ((vt.FrameType&0x0f)<<4)|(vt.CodecID&0x0f))
+	b = append(b, (vt.FrameType<<4)|(vt.CodecID&0x0f))
 	switch vt.CodecID {
 	case JPEG, SORENSON_H263, SCREEN_VIDEO, ON2_VP6, ON2_VP6_WITH_ALPHA_CHANNEL, SCREEN_VIDEO_VERSION2:
 		//ignore

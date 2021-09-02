@@ -1,7 +1,6 @@
 package librtmp
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -97,7 +96,7 @@ func (room *Room) RTMPJoin(rtmp *RTMP) {
 				messageStreamID: 0,
 			}
 			if audioTag, oka := tag.(*libflv.AudioTag); oka {
-				fmt.Printf("[gop send audio] message time:%d\n", mb.messageTime)
+				fmt.Printf("[gop send audio] message time:%d, dataSize:%d\n", mb.messageTime, mb.messageLength)
 				err = NewAudioMessage(mb, audioTag).Send()
 			} else if videoTag, okv := tag.(*libflv.VideoTag); okv {
 				fmt.Printf("[gop send video] message time:%d, componsition time:%d\n", mb.messageTime, videoTag.CompositionTime)
@@ -115,45 +114,30 @@ func (room *Room) RTMPJoin(rtmp *RTMP) {
 func (room *Room) FLVJoin(writer easyio.EasyWriter) {
 	writer.Write([]byte{0x46, 0x4c, 0x56, 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
 	gopReader := broadcast.NewBroadcastReader(room.GOP)
-	var writedSize uint32 = 11
 	var b []byte
-	writedSizeByte := make([]byte, 4, 4)
-	go func() {
-		//room.MetaMutex.RLock()
-		//b = room.Meta.Marshal()
-		//room.MetaMutex.RUnlock()
-		//writer.Write(b)
-		//writedSize += uint32(len(b))
-		//binary.BigEndian.PutUint32(writedSizeByte, writedSize)
-		//writer.Write(writedSizeByte)
 
-		room.VideoSeqMutex.RLock()
-		b = room.VideoSeq.Marshal()
-		room.VideoSeqMutex.RUnlock()
-		writer.Write(b)
-		writedSize += uint32(len(b))
-		binary.BigEndian.PutUint32(writedSizeByte, writedSize)
-		writer.Write(writedSizeByte)
+	room.MetaMutex.RLock()
+	b = libflv.FLVWrite(room.Meta)
+	room.MetaMutex.RUnlock()
+	writer.Write(b)
 
-		room.AudioSeqMutex.RLock()
-		b = room.AudioSeq.Marshal()
-		room.AudioSeqMutex.RUnlock()
-		writer.Write(b)
-		writedSize += uint32(len(b))
-		binary.BigEndian.PutUint32(writedSizeByte, writedSize)
-		writer.Write(writedSizeByte)
-		for {
-			p, alive := gopReader.Read()
-			if !alive {
-				fmt.Println("the publisher had been exit.")
-				break
-			}
-			tag := p.(libflv.Tag)
-			writedSize += writeFLVTag(tag, writer)
-			binary.BigEndian.PutUint32(writedSizeByte, writedSize)
-			writer.Write(writedSizeByte)
+	room.VideoSeqMutex.RLock()
+	b = libflv.FLVWrite(room.VideoSeq)
+	room.VideoSeqMutex.RUnlock()
+	writer.Write(b)
+
+	room.AudioSeqMutex.RLock()
+	b = libflv.FLVWrite(room.AudioSeq)
+	room.AudioSeqMutex.RUnlock()
+	writer.Write(b)
+	for {
+		p, alive := gopReader.Read()
+		if !alive {
+			fmt.Println("the publisher had been exit.")
+			break
 		}
-	}()
+		writer.Write(libflv.FLVWrite(p.(libflv.Tag)))
+	}
 }
 
 func writeFLVTag(tag libflv.Tag, flvWriter easyio.EasyWriter) (n uint32) {

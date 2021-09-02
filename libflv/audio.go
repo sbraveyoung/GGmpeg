@@ -1,6 +1,8 @@
 package libflv
 
-import "errors"
+import (
+	"errors"
+)
 
 const (
 	LINER_PCM_PLATFORM_ENDIAN   uint8 = 0
@@ -80,7 +82,7 @@ func (at *AudioTag) Marshal() (b []byte) {
 	b = append(b, (at.SoundFormat<<4)|((at.SoundRate&0x03)<<2)|((at.SoundSize&0x01)<<1)|(at.SoundType&0x01))
 	if at.SoundFormat == AAC {
 		b = append(b, at.AACPacketType)
-		b = append(b, at.SoundData...)
 	}
+	b = append(b, at.SoundData...)
 	return b
 }
