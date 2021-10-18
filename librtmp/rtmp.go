@@ -5,7 +5,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/SmartBrave/Athena/easyio"
 )
 
 type RTMP struct {

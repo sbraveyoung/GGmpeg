@@ -1,16 +1,24 @@
 package librtmp
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/SmartBrave/GGmpeg/libhls"
+)
 
 type App struct {
 	appName string
 	rooms   *sync.Map //roomID, *Room
+	hlsMode libhls.HLS_MODE
+	hls     *sync.Map //roomID,*HLS
 }
 
 func NewApp(appName string) *App {
 	return &App{
 		appName: appName,
 		rooms:   &sync.Map{},
+		hlsMode: libhls.NONE,
+		hls:     &sync.Map{},
 	}
 }
 

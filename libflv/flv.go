@@ -3,7 +3,7 @@ package libflv
 import (
 	"encoding/binary"
 
-	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/SmartBrave/Athena/easyio"
 )
 
 const (

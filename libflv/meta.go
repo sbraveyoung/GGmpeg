@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/SmartBrave/Athena/easyerrors"
+	"github.com/SmartBrave/Athena/easyio"
 	"github.com/SmartBrave/GGmpeg/libamf"
-	"github.com/SmartBrave/utils_sb/easyerrors"
-	"github.com/SmartBrave/utils_sb/easyio"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"
@@ -86,4 +86,9 @@ func (mt *MetaTag) Marshal() (b []byte) {
 		return nil
 	}
 	return b
+}
+
+func (mt *MetaTag) Data() (b []byte) {
+	//XXX
+	return
 }

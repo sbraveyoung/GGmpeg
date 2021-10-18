@@ -1,6 +1,6 @@
 package libamf
 
-import "github.com/SmartBrave/utils_sb/easyio"
+import "github.com/SmartBrave/Athena/easyio"
 
 type AMF interface {
 	Decode(easyio.EasyReader) ([]interface{}, error)

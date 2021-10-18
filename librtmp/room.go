@@ -5,10 +5,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SmartBrave/Athena/broadcast"
+	"github.com/SmartBrave/Athena/easyerrors"
+	"github.com/SmartBrave/Athena/easyio"
 	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/utils_sb/broadcast"
-	"github.com/SmartBrave/utils_sb/easyerrors"
-	"github.com/SmartBrave/utils_sb/easyio"
 )
 
 type Room struct {
@@ -38,9 +38,10 @@ func NewRoom(rtmp *RTMP, roomID string) *Room {
 //player join the room
 func (room *Room) RTMPJoin(rtmp *RTMP) {
 	//room.Players.Store(rtmp.peer, rtmp)
-	gopReader := broadcast.NewBroadcastReader(room.GOP)
 
+	//XXX: using goroutine is unnecessary?
 	go func() {
+		gopReader := broadcast.NewBroadcastReader(room.GOP)
 		var err1, err2, err3 error
 		room.MetaMutex.RLock()
 		dm := NewDataMessage(MessageBase{
@@ -132,7 +133,7 @@ func (room *Room) FLVJoin(writer easyio.EasyWriter) {
 	writer.Write(b)
 	for {
 		p, alive := gopReader.Read()
-		if !alive {
+		if !alive { //XXX: `if !alive && p==nil` is better?
 			fmt.Println("the publisher had been exit.")
 			break
 		}
@@ -140,8 +141,11 @@ func (room *Room) FLVJoin(writer easyio.EasyWriter) {
 	}
 }
 
-func writeFLVTag(tag libflv.Tag, flvWriter easyio.EasyWriter) (n uint32) {
-	b := tag.Marshal()
-	flvWriter.Write(b)
-	return uint32(len(b))
+func (room *Room) HLSJoin(writer easyio.EasyWriter) {
+	//XXX: remove to libhls
+	writer.Write([]byte(fmt.Sprintf(`#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-ALLOW-CACHE:YES
+#EXT-X-TARGETDURATION:%d
+#EXT-X-MEDIA-SEQUENCE:%d`, 2, 35)))
 }

@@ -2,7 +2,7 @@ package librtmp
 
 import (
 	"github.com/SmartBrave/GGmpeg/libamf"
-	"github.com/SmartBrave/utils_sb/easyerrors"
+	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/pkg/errors"
 )
 

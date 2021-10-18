@@ -6,9 +6,11 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/GGmpeg/libamf"
-	"github.com/SmartBrave/utils_sb/easyerrors"
-	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/SmartBrave/GGmpeg/libhls"
+	"github.com/SmartBrave/Athena/easyerrors"
+	"github.com/SmartBrave/Athena/easyio"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"
@@ -173,12 +175,14 @@ func (cm *CommandMessage) Do() (err error) {
 			StreamID:        cm.messageStreamID,
 		}).Send()
 	case PUBLISH:
-		if rooms, ok := cm.rtmp.server.apps[cm.rtmp.app]; !ok {
+		var app *App
+		var ok bool
+		if app, ok = cm.rtmp.server.apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
-			if cm.rtmp.room = rooms.Load(cm.PublishingName); cm.rtmp.room == nil {
+			if cm.rtmp.room = app.Load(cm.PublishingName); cm.rtmp.room == nil {
 				cm.rtmp.room = NewRoom(cm.rtmp, cm.PublishingName)
-				rooms.Store(cm.PublishingName, cm.rtmp.room)
+				app.Store(cm.PublishingName, cm.rtmp.room)
 			} else {
 				//XXX: repeat error?
 			}
@@ -195,12 +199,18 @@ func (cm *CommandMessage) Do() (err error) {
 				Description: "Start publishing",
 			},
 		}).Send()
+
+		if app.hlsMode == libhls.IMMEDIATELY {
+			go libhls.NewHls().Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
+		}
 	case PLAY:
-		if rooms, ok := cm.rtmp.server.apps[cm.rtmp.app]; !ok {
+		var app *App
+		var ok bool
+		if app, ok = cm.rtmp.server.apps[cm.rtmp.app]; !ok {
 			//TODO: return error
 		} else {
 			//NOTE: the room must be created by publisher
-			if cm.rtmp.room = rooms.Load(cm.PublishingName); cm.rtmp.room == nil {
+			if cm.rtmp.room = app.Load(cm.PublishingName); cm.rtmp.room == nil {
 				//TODO: return "room does not exist"
 			} else {
 				cm.rtmp.room.RTMPJoin(cm.rtmp)

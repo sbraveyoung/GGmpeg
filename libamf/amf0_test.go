@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/SmartBrave/Athena/easyio"
 )
 
 func Test_amf0_Decode(t *testing.T) {

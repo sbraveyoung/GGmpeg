@@ -15,13 +15,15 @@ const ( //frame_type
 )
 
 const ( //codec_id
-	JPEG                       uint8 = 1 //currently unused
-	SORENSON_H263                    = 2
-	SCREEN_VIDEO                     = 3
-	ON2_VP6                          = 4
-	ON2_VP6_WITH_ALPHA_CHANNEL       = 5
-	SCREEN_VIDEO_VERSION2            = 6
-	AVC                              = 7
+	// JPEG                       uint8 = 1
+	FLV_VIDEO_SORENSON_H263 = 2
+	// FLV_VIDEO_SCREEN_VIDEO               = 3
+	FLV_VIDEO_VP6 = 4 //ON2_VP6
+	// FLV_VIDEO_ON2_VP6_WITH_ALPHA_CHANNEL = 5
+	// FLV_VIDEO_SCREEN_VIDEO_VERSION2      = 6
+	FLV_VIDEO_AVC  = 7
+	FLV_VIDEO_HEVC = 12 //https://github.com/CDN-Union/H265
+	FLV_VIDEO_AV1  = 13 //https://aomediacodec.github.io/av1-isobmff
 )
 
 const ( //avc_packet_type
@@ -32,11 +34,11 @@ const ( //avc_packet_type
 
 type VideoTag struct {
 	TagBase
-	FrameType       uint8 //4bits
-	CodecID         uint8 //4bits
-	VideoData       []byte
-	AVCPacketType   uint8
-	CompositionTime uint32 //int24
+	FrameType     uint8 //4bits
+	CodecID       uint8 //4bits
+	VideoData     []byte
+	AVCPacketType uint8
+	Cts           uint32 //CompositionTime, int24
 }
 
 func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
@@ -51,16 +53,13 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 		VideoData: b[1:],
 	}
 
-	switch video.CodecID {
-	case JPEG, SORENSON_H263, SCREEN_VIDEO, ON2_VP6, ON2_VP6_WITH_ALPHA_CHANNEL, SCREEN_VIDEO_VERSION2:
-	//ignore
-	case AVC:
+	if video.CodecID == FLV_VIDEO_AVC || video.CodecID == FLV_VIDEO_HEVC || video.CodecID == FLV_VIDEO_AV1 {
+		if len(b) < 5 {
+			return nil, errors.New("invalid video format")
+		}
 		video.AVCPacketType = b[1]
-		video.CompositionTime = uint32(0x00)<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
+		video.Cts = uint32(0x00)<<24 | uint32(b[2])<<16 | uint32(b[3])<<8 | uint32(b[4])
 		video.VideoData = b[5:]
-	default:
-		// XXX: could do better!
-		// panic(video.CodecID)
 	}
 
 	return video, nil
@@ -69,11 +68,9 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 func (vt *VideoTag) Marshal() (b []byte) {
 	b = append(b, (vt.FrameType<<4)|(vt.CodecID&0x0f))
 	switch vt.CodecID {
-	case JPEG, SORENSON_H263, SCREEN_VIDEO, ON2_VP6, ON2_VP6_WITH_ALPHA_CHANNEL, SCREEN_VIDEO_VERSION2:
-		//ignore
-	case AVC:
+	case FLV_VIDEO_AVC:
 		b = append(b, vt.AVCPacketType)
-		b = append(b, uint8((vt.CompositionTime>>16)&0xff), uint8((vt.CompositionTime>>8)&0xff), uint8(vt.CompositionTime&0xff))
+		b = append(b, uint8((vt.Cts>>16)&0xff), uint8((vt.Cts>>8)&0xff), uint8(vt.Cts&0xff))
 	default:
 		fmt.Println("vt.CodecID:", vt.CodecID)
 		time.Sleep(time.Second)
@@ -81,4 +78,8 @@ func (vt *VideoTag) Marshal() (b []byte) {
 	}
 	b = append(b, vt.VideoData...)
 	return b
+}
+
+func (vt *VideoTag) Data() (b []byte) {
+	return vt.VideoData
 }

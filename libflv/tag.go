@@ -2,11 +2,12 @@ package libflv
 
 // "fmt"
 
-// "github.com/SmartBrave/utils_sb/easyio"
+// "github.com/SmartBrave/Athena/easyio"
 
 type Tag interface {
 	Marshal() []byte
 	GetTagInfo() *TagBase
+	Data() []byte
 }
 
 type TagBase struct {

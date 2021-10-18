@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/SmartBrave/utils_sb/easyerrors"
-	"github.com/SmartBrave/utils_sb/easyio"
+	"github.com/SmartBrave/Athena/easyerrors"
+	"github.com/SmartBrave/Athena/easyio"
 )
 
 type Marker uint8
