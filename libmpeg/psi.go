@@ -10,7 +10,10 @@ import (
 //https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.15.01_60/en_300468v011501p.pdf
 //https://en.wikipedia.org/wiki/MPEG_transport_stream
 //iso13818-1.pdf: Table 2-23 Program specific information
-type PSI interface{}
+type PSI interface {
+	Parse(easyio.EasyReader) error
+	Marshal(easyio.EasyWriter, int) (int, bool, error)
+}
 
 //iso13818-1.pdf: 2.4.4.3
 type PAT struct { //Program Association Table, PID:0x0000
@@ -29,7 +32,7 @@ type PAT struct { //Program Association Table, PID:0x0000
 	CRC32                uint32
 }
 
-func NewPAT() (pat *PAT) {
+func NewPAT() *PAT {
 	return &PAT{
 		PMTs: make(map[uint16]*PMT),
 	}
@@ -91,7 +94,7 @@ func (pat *PAT) Parse(reader easyio.EasyReader) (err error) {
 	return nil
 }
 
-func (pat *PAT) Marshal(writer easyio.EasyWriter) (err error) {
+func (pat *PAT) Marshal(writer easyio.EasyWriter, writable int) (n int, finish bool, err error) {
 	b := []byte{
 		pat.TableID,
 		((pat.SectionSyntaxIndicator << 7) & 0x80) | 0x30 | uint8((pat.SectionLength>>8)&0x0f),
@@ -111,7 +114,10 @@ func (pat *PAT) Marshal(writer easyio.EasyWriter) (err error) {
 	crc := CRC32(b)
 	b = append(b, byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc))
 
-	return writer.WriteFull(b)
+	if writable < len(b) {
+		return 0, false, fmt.Errorf("invalid writable:%d with pat", writable)
+	}
+	return len(b), true, writer.WriteFull(b)
 }
 
 type PMT struct { //Program Map Table
@@ -134,7 +140,7 @@ type PMT struct { //Program Map Table
 	CRC32             uint32
 }
 
-func NewPMT(programNumber uint16) (pmt *PMT) {
+func NewPMT(programNumber uint16) *PMT {
 	return &PMT{
 		ProgramNumber: programNumber,
 		Streams:       make(map[uint16]*PES),
@@ -198,7 +204,7 @@ func (pmt *PMT) Parse(reader easyio.EasyReader) (err error) {
 				return fmt.Errorf("invalid ESInfoLength of PMT, ESInfoLength:%d", esInfoLength)
 			}
 			i += int(esInfoLength)
-			pmt.Streams[streamPID] = NewPES(b3[i])
+			pmt.Streams[streamPID] = NewPES()
 		}
 	}
 
@@ -216,7 +222,7 @@ func (pmt *PMT) Parse(reader easyio.EasyReader) (err error) {
 	return nil
 }
 
-func (pmt *PMT) Marshal(writer easyio.EasyWriter) (err error) {
+func (pmt *PMT) Marshal(writer easyio.EasyWriter, writable int) (n int, finish bool, err error) {
 	b := []byte{
 		pmt.TableID,
 		((pmt.SectionSyntaxIndicator << 7) & 0x80) | 0x30 | (uint8(pmt.SectionLength>>8) & 0x0f),
@@ -232,7 +238,7 @@ func (pmt *PMT) Marshal(writer easyio.EasyWriter) (err error) {
 		uint8(pmt.ProgramInfoLength & 0xff),
 	}
 	for streamPID, stream := range pmt.Streams {
-		b = append(b, stream.StreamType)
+		b = append(b, stream.StreamID)
 		b = append(b, 0xe0|uint8(streamPID>>8)&0x1f, uint8(streamPID&0xff))
 		b = append(b, 0xf0|uint8(0), uint8(0))
 	}
@@ -241,7 +247,10 @@ func (pmt *PMT) Marshal(writer easyio.EasyWriter) (err error) {
 	crc := CRC32(b)
 	b = append(b, byte(crc>>24), byte(crc>>16), byte(crc>>8), byte(crc))
 
-	return writer.WriteFull(b)
+	if writable < len(b) {
+		return 0, false, fmt.Errorf("invalid writable:%d with pmt", writable)
+	}
+	return len(b), true, writer.WriteFull(b)
 }
 
 type CAT struct{} //Conditional Access Table, PID:0x01

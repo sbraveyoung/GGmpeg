@@ -89,7 +89,7 @@ func (vm *VideoMessage) Do() (err error) {
 	}
 
 	//pts=dts+cts
-	fmt.Printf("[gop receive video] message time(dts):%d, componsition time(cts):%d, now:%+v\n", vm.messageTime, vm.videoTag.CompositionTime, time.Now())
+	fmt.Printf("[gop receive video] message time(dts):%d, componsition time(cts):%d, now:%+v\n", vm.messageTime, vm.videoTag.Cts, time.Now())
 	vm.rtmp.room.GOP.Write(vm.videoTag)
 	return nil
 }

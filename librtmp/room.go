@@ -100,7 +100,7 @@ func (room *Room) RTMPJoin(rtmp *RTMP) {
 				fmt.Printf("[gop send audio] message time:%d, dataSize:%d\n", mb.messageTime, mb.messageLength)
 				err = NewAudioMessage(mb, audioTag).Send()
 			} else if videoTag, okv := tag.(*libflv.VideoTag); okv {
-				fmt.Printf("[gop send video] message time:%d, componsition time:%d\n", mb.messageTime, videoTag.CompositionTime)
+				fmt.Printf("[gop send video] message time:%d, componsition time:%d\n", mb.messageTime, videoTag.Cts)
 				err = NewVideoMessage(mb, videoTag).Send()
 			} else {
 				//XXX

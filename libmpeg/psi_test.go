@@ -96,7 +96,7 @@ func TestPAT_Marshal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := bytes.NewBuffer([]byte{})
 			writer := easyio.NewEasyWriter(buf)
-			err := tt.pat.Marshal(writer)
+			_, err := tt.pat.Marshal(writer)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("PAT.Marshal() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -207,7 +207,7 @@ func TestPMT_Marshal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := bytes.NewBuffer([]byte{})
 			writer := easyio.NewEasyWriter(buf)
-			err := tt.pmt.Marshal(writer)
+			_, err := tt.pmt.Marshal(writer)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("PMT.Marshal() error = %v, wantErr %v", err, tt.wantErr)
 			}
