@@ -42,7 +42,7 @@ func (rtmp *RTMP) HandlerServer() {
 	fmt.Println("handshake done...")
 
 	for {
-		//fmt.Println("-----------------------------------")
+		fmt.Println("-----------------------------------")
 		err = ParseMessage(rtmp)
 		if err == io.EOF {
 			fmt.Println("disconnect")

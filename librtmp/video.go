@@ -2,7 +2,6 @@ package librtmp
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/SmartBrave/GGmpeg/libflv"
 )
@@ -76,20 +75,40 @@ func (vm *VideoMessage) Parse() (err error) {
 }
 
 func (vm *VideoMessage) Do() (err error) {
-	if vm.videoTag.FrameType == libflv.KEY_FRAME && vm.videoTag.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
-		vm.rtmp.room.VideoSeqMutex.Lock()
-		vm.rtmp.room.VideoSeq = vm.videoTag
-		vm.rtmp.room.VideoSeqMutex.Unlock()
-		return nil
-	}
+	//if vm.videoTag.FrameType == libflv.KEY_FRAME && vm.videoTag.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
+	//	vm.rtmp.room.VideoSeqMutex.Lock()
+	//	vm.rtmp.room.VideoSeq = vm.videoTag
+	//	vm.rtmp.room.VideoSeqMutex.Unlock()
+	//}
+
+	//if vm.videoTag.FrameType == libflv.KEY_FRAME {
+	//	fmt.Printf("[gop reset], now:%v\n", time.Now())
+	//	vm.rtmp.room.GOP.Reset()
+	//	vm.rtmp.room.GOP.Write(vm.rtmp.room.VideoSeq)
+	//	return nil
+	//}
+
+	////pts=dts+cts
+	//fmt.Printf("[gop receive video] message time(dts):%d, componsition time(cts):%d, now:%+v\n", vm.messageTime, vm.videoTag.Cts, time.Now())
+	//vm.rtmp.room.GOP.Write(vm.videoTag)
+	//return nil
 
 	if vm.videoTag.FrameType == libflv.KEY_FRAME {
-		fmt.Printf("[gop reset], now:%v\n", time.Now())
-		vm.rtmp.room.GOP.Reset()
-	}
+		if vm.videoTag.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
+			// vm.rtmp.room.VideoSeqMutex.Lock()
+			// vm.rtmp.room.VideoSeq = vm.videoTag
+			// vm.rtmp.room.VideoSeqMutex.Unlock()
 
-	//pts=dts+cts
-	fmt.Printf("[gop receive video] message time(dts):%d, componsition time(cts):%d, now:%+v\n", vm.messageTime, vm.videoTag.Cts, time.Now())
-	vm.rtmp.room.GOP.Write(vm.videoTag)
+			vm.rtmp.room.GOP.WriteMeta(vm.videoTag)
+		} else {
+			vm.rtmp.room.GOP.Reset()
+			// vm.rtmp.room.VideoSeqMutex.RLock()
+			vm.rtmp.room.GOP.Write(vm.videoTag)
+			// vm.rtmp.room.VideoSeqMutex.RUnlock()
+		}
+		fmt.Printf("write packet video :%+v\n", vm.videoTag)
+	} else {
+		vm.rtmp.room.GOP.Write(vm.videoTag)
+	}
 	return nil
 }

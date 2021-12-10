@@ -76,9 +76,8 @@ func (am *AudioMessage) Parse() (err error) {
 
 func (am *AudioMessage) Do() (err error) {
 	if am.audioTag.SoundFormat == libflv.FLV_AUDIO_AAC && am.audioTag.AACPacketType == libflv.AAC_SEQUENCE_HEADER {
-		am.rtmp.room.AudioSeqMutex.Lock()
-		am.rtmp.room.AudioSeq = am.audioTag
-		am.rtmp.room.AudioSeqMutex.Unlock()
+		am.rtmp.room.GOP.WriteMeta(am.audioTag)
+		fmt.Printf("write packet audio :%+v\n", am.audioTag)
 		return nil
 	}
 	fmt.Printf("[gop receive audio] message time(dts):%d, now:%+v\n", am.messageTime, time.Now())

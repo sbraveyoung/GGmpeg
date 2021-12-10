@@ -57,8 +57,8 @@ func (dm *DataMessage) Parse() (err error) {
 }
 
 func (dm *DataMessage) Do() (err error) {
-	dm.rtmp.room.MetaMutex.Lock()
-	dm.rtmp.room.Meta = dm.metaTag
-	dm.rtmp.room.MetaMutex.Unlock()
+	dm.rtmp.room.GOP.WriteMeta(dm.metaTag)
+	fmt.Printf("write packet data :%+v\n", dm.metaTag)
+
 	return nil
 }

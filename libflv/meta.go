@@ -17,15 +17,15 @@ type MetaTag struct {
 	TagBase         `structs:"-"`
 	FirstField      string  `structs:"-"`
 	SecondField     string  `structs:"-"`
-	AudioChannels   float64 `mapstructure:"audiochannels" structs:"audiochannels"`
-	AudioCodecID    string  `mapstructure:"audiocodecid" structs:"audiocodecid"`
+	AudioChannels   string  `mapstructure:"audiochannels" structs:"audiochannels"`
+	AudioCodecID    float64 `mapstructure:"audiocodecid" structs:"audiocodecid"`
 	AudioDataRate   int     `mapstructure:"audiodatarate" structs:"audiodatarate"`
 	AudioSampleRate int     `mapstructure:"audiosamplerate" structs:"audiosamplerate"`
 	AudioSampleSize int     `mapstructure:"audiosamplesize" structs:"audiosamplesize"`
 	Author          string  `mapstructure:"author" structs:"author"`
 	Company         string  `mapstructure:"company" structs:"company"`
-	DisplayHeight   string  `mapstructure:"displayheight" structs:"displayheight"`
-	DisplayWidth    string  `mapstructure:"displaywidth" structs:"displaywidth"`
+	DisplayHeight   string  `mapstructure:"displayHeight" structs:"displayHeight"`
+	DisplayWidth    string  `mapstructure:"displayWidth" structs:"displayWidth"`
 	Duration        int     `mapstructure:"duration" structs:"duration"`
 	Encoder         string  `mapstructure:"encoder" structs:"encoder"`
 	FileSize        int     `mapstructure:"filesize" structs:"filesize"`
@@ -36,7 +36,7 @@ type MetaTag struct {
 	Profile         string  `mapstructure:"profile" structs:"profile"`
 	Stereo          bool    `mapstructure:"stereo" structs:"stereo"`
 	Version         string  `mapstructure:"version" structs:"version"`
-	VideoCodecID    string  `mapstructure:"videocodecid" structs:"videocodecid"`
+	VideoCodecID    float64 `mapstructure:"videocodecid" structs:"videocodecid"`
 	VideoDataRate   float64 `mapstructure:"videodatarate" structs:"videodatarate"`
 	Width           int     `mapstructure:"width" structs:"width"`
 }
@@ -58,9 +58,10 @@ func ParseMetaTag(tb TagBase, amf libamf.AMF, b []byte) (meta *MetaTag, err erro
 		SecondField: array[1].(string),
 	}
 
-	err = mapstructure.Decode(array[2], &meta)
+	err = mapstructure.Decode(array[2], meta)
 	if err != nil {
-		err = errors.Wrap(err, "mapstructure.Decode")
+		fmt.Printf("decode data error, err:%+v\n", err)
+		err = errors.Wrap(err, "mapstructure.Decode data")
 	}
 
 	return meta, err

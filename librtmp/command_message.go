@@ -7,10 +7,10 @@ import (
 	"reflect"
 
 	"github.com/SmartBrave/Athena/broadcast"
-	"github.com/SmartBrave/GGmpeg/libamf"
-	"github.com/SmartBrave/GGmpeg/libhls"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
+	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/SmartBrave/GGmpeg/libhls"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"

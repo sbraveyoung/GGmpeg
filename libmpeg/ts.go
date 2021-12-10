@@ -118,7 +118,7 @@ func (af *AdaptationField) Parse(reader easyio.EasyReader) (err error) {
 	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5, err6, err7, err8)
 }
 
-func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (err error) {
+func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (n int, err error) {
 	b := []byte{
 		af.AdaptationFieldLength,
 		((af.DiscontinuityIndicator << 7) & 0x80) | ((af.RandomAccessIndicator << 6) & 0x40) | ((af.ElementaryStreamPriority << 5) & 0x20) | ((af.PCRFlag << 4) & 0x10) | ((af.OPCRFlag << 3) & 0x08) | ((af.SplicingPointFlag << 2) & 0x04) | ((af.TransportPrivateDataFlag << 1) & 0x02) | (af.AdaptationFieldExtensionFlag & 0x01),
@@ -131,7 +131,7 @@ func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (err error) {
 
 	//TODO
 
-	return writer.WriteFull(b)
+	return len(b), writer.WriteFull(b)
 }
 
 type TS struct {
@@ -150,13 +150,11 @@ type TS struct {
 //https://en.wikipedia.org/wiki/MPEG_transport_stream
 //https://zh.wikipedia.org/wiki/MPEG2-TS
 //https://blog.csdn.net/Kayson12345/article/details/81266587
-//NOTE：Please ensure that the pid was include in the pidTable
-func NewTs(pid uint16, cc map[uint16]uint8) (ts *TS) {
-	cc[pid] = (cc[pid] + 1) % 0x0f
+func NewTs(pid uint16, cc map[uint16]uint8, firstTs bool) (ts *TS) {
 	ts = &TS{
 		SyncByte:                   0x47,
 		TransportErrorIndicator:    0x00,
-		PayloadUnitStartIndicator:  0x01,
+		PayloadUnitStartIndicator:  0x00,
 		TransportPriority:          0x00,
 		PID:                        pid,
 		TransportScramblingControl: 0x00,
@@ -165,6 +163,11 @@ func NewTs(pid uint16, cc map[uint16]uint8) (ts *TS) {
 		//AdaptationField            :,
 		PayloadPointer: 0x00,
 	}
+	cc[pid] = (cc[pid] + 1) % 0x10
+	if firstTs {
+		ts.PayloadUnitStartIndicator = 0x01
+	}
+
 	//TODO
 	switch ts.TransportScramblingControl {
 	case 0x00:
@@ -225,42 +228,50 @@ func (ts *TS) DeMux(pidTable map[uint16]PSI, reader easyio.EasyReader) (err erro
 	return psi.Parse(reader)
 }
 
-func (ts *TS) Mux(psi PSI, frameKey bool, dts uint64, writer easyio.EasyWriter) (finish bool, err error) {
-	if frameKey {
+func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.EasyWriter) (finish bool, err error) {
+	var err1, err2, err3 error
+	if firstTSofKeyFrame {
 		ts.AdaptationFieldExist |= 0x20
 		ts.AdaptationField = &AdaptationField{
-			AdaptationFieldLength: 0x07,
-			RandomAccessIndicator: true,
-			PCRFlag:               true,
-			PCRField: &PCR{
-				Low:  dts,
-				High: 0,
-			},
+			AdaptationFieldLength:          0x07,
+			RandomAccessIndicator:          0x01,
+			PCRFlag:                        0x01,
+			ProgramClockReferenceBase:      dts,
+			ProgramClockReferenceExtension: 0,
 		}
 	}
+
+	writed := 0
 	b := []byte{
 		ts.SyncByte,
 		((ts.TransportErrorIndicator << 7) & 0x80) | ((ts.PayloadUnitStartIndicator << 6) & 0x40) | ((ts.TransportPriority << 5) & 0x20) | (uint8(ts.PID>>8) & 0x1f),
 		uint8(ts.PID) & 0xff,
 		((ts.TransportScramblingControl << 6) & 0xc0) | ((ts.AdaptationFieldExist << 4) & 0x30) | (ts.ContinuityCounter & 0x0f),
 	}
+	err1 = writer.WriteFull(b)
+	writed += len(b)
+	fmt.Println("print cc:", ts.ContinuityCounter)
 
-	//TODO: AdaptationField
-	if ts.AdaptationFieldExist != 0 {
-		ts.AdaptationField.Marshal()
+	//AdaptationField
+	if (ts.AdaptationFieldExist|0x20) != 0 && ts.AdaptationField != nil {
+		var n int
+		n, err2 = ts.AdaptationField.Marshal(writer)
+		writed += n
 	}
 
 	if ts.PayloadUnitStartIndicator == 0x01 {
-		b = append(b, 0x00)
+		writer.Write([]byte{0x00})
+		writed += 1
 	}
 
-	err1 := writer.WriteFull(b)
-	n, finish, err2 := psi.Marshal(writer, 188-len(b))
-	for i := 0; i < 188-len(b)-n; i++ {
+	n, finish, err3 := psi.Marshal(writer, 188-writed)
+	writed += n
+
+	for i := 0; i < 188-writed; i++ {
 		err = writer.WriteFull([]byte{0xff})
 		if err != nil {
 			break
 		}
 	}
-	return finish, easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err)
+	return finish, easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
 }

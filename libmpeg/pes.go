@@ -3,6 +3,7 @@ package libmpeg
 import (
 	"fmt"
 
+	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
 )
 
@@ -39,6 +40,8 @@ type PES struct {
 	ESCRBase      uint64 //33bit
 	ESCRExtension uint16 //9bit
 	ESRate        uint32 //22bit
+	Data          []byte
+	Index         int
 }
 
 func NewPES() (pes *PES) {
@@ -207,28 +210,46 @@ func (pes *PES) Parse(reader easyio.EasyReader) (err error) {
 }
 
 func (pes *PES) Marshal(writer easyio.EasyWriter, writable int) (n int, finish bool, err error) {
-	b := []byte{
-		uint8(pes.PacketStartCodePrefix >> 16),
-		uint8(pes.PacketStartCodePrefix >> 8),
-		uint8(pes.PacketStartCodePrefix),
-		pes.StreamID,
-		uint8(pes.PESPacketLength >> 8),
-		uint8(pes.PESPacketLength),
-	}
-	if pes.StreamID != 0xbc && pes.StreamID != 0xbe && pes.StreamID != 0xbf && pes.StreamID != 0xf0 && pes.StreamID != 0xf1 && pes.StreamID != 0xff && pes.StreamID != 0xf2 && pes.StreamID != 0xf8 {
-		b = append(b, 0x80) //ignore other useless fields
-		if pes.PTS == pes.DTS {
-			b = append(b, 0x80, 0x05)
-			b = append(b, 0x21|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
-		} else {
-			b = append(b, 0xc0, 0x0a)
-			b = append(b, 0x31|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
-			b = append(b, 0x11|(uint8(pes.DTS>>29)&0x0e), uint8(pes.DTS>>22), (uint8(pes.DTS>>14)&0xfe)|0x01, uint8(pes.DTS>>7), (uint8(pes.DTS<<1)&0xfe)|0x01)
+	fmt.Printf("writable:%d, pes.StreamID:%x, pts:%d, dts:%d, pes.Index:%d, len(pes.Data):%d\n", writable, pes.StreamID, pes.PTS, pes.DTS, pes.Index, len(pes.Data))
+	var err1, err2 error
+	var b []byte
+	if pes.Index == 0 {
+		b = []byte{
+			uint8(pes.PacketStartCodePrefix >> 16),
+			uint8(pes.PacketStartCodePrefix >> 8),
+			uint8(pes.PacketStartCodePrefix),
+			pes.StreamID,
+			uint8(pes.PESPacketLength >> 8),
+			uint8(pes.PESPacketLength),
 		}
+		if pes.StreamID != 0xbc && pes.StreamID != 0xbe && pes.StreamID != 0xbf && pes.StreamID != 0xf0 && pes.StreamID != 0xf1 && pes.StreamID != 0xff && pes.StreamID != 0xf2 && pes.StreamID != 0xf8 {
+			b = append(b, 0x80) //ignore other useless fields
+			if pes.PTS == pes.DTS {
+				b = append(b, 0x80, 0x05)
+				b = append(b, 0x21|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
+			} else {
+				b = append(b, 0xc0, 0x0a)
+				b = append(b, 0x31|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
+				b = append(b, 0x11|(uint8(pes.DTS>>29)&0x0e), uint8(pes.DTS>>22), (uint8(pes.DTS>>14)&0xfe)|0x01, uint8(pes.DTS>>7), (uint8(pes.DTS<<1)&0xfe)|0x01)
+			}
+		}
+
+		if writable < len(b) {
+			return 0, false, fmt.Errorf("invalid writable:%d with pes", writable)
+		}
+		err1 = writer.WriteFull(b)
+		writable -= len(b)
 	}
 
-	if writable < len(b) {
-		return 0, false, fmt.Errorf("invalid writable:%d with pes", writable)
+	if writable > len(pes.Data)-pes.Index {
+		writable = len(pes.Data) - pes.Index
 	}
-	return len(b), true, writer.WriteFull(b)
+	if pes.Index+writable > len(pes.Data) {
+		writable = len(pes.Data) - pes.Index
+	}
+
+	n, err2 = writer.Write(pes.Data[pes.Index : pes.Index+writable])
+	pes.Index += writable
+
+	return len(b) + writable, pes.Index == len(pes.Data), easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 }
