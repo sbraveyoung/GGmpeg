@@ -67,10 +67,10 @@ func (am *AudioMessage) Send() (err error) {
 func (am *AudioMessage) Parse() (err error) {
 	am.audioTag, err = libflv.ParseAudioTag(libflv.TagBase{
 		TagType:   libflv.AUDIO_TAG,
-		DataSize:  am.messageLength,
 		TimeStamp: am.messageTime,
 		StreamID:  0,
 	}, am.messagePayload)
+	am.audioTag.DataSize = uint32(len(am.audioTag.Data()))
 	return err
 }
 

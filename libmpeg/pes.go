@@ -234,6 +234,7 @@ func (pes *PES) Marshal(writer easyio.EasyWriter, writable int) (n int, finish b
 			}
 		}
 
+		fmt.Printf("11111111111111111111 len(p.data):%d, pes header:%x\n", len(pes.Data), b)
 		if writable < len(b) {
 			return 0, false, fmt.Errorf("invalid writable:%d with pes", writable)
 		}

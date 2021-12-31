@@ -51,6 +51,7 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 		FrameType: (b[0] >> 4) & 0x0f,
 		CodecID:   b[0] & 0x0f,
 		VideoData: b[1:],
+		// VideoData: b,
 	}
 
 	if video.CodecID == FLV_VIDEO_AVC || video.CodecID == FLV_VIDEO_HEVC || video.CodecID == FLV_VIDEO_AV1 {

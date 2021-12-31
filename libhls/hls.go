@@ -1,12 +1,16 @@
 package libhls
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
+	"github.com/SmartBrave/GGmpeg/libaac"
+	"github.com/SmartBrave/GGmpeg/libavc"
 	"github.com/SmartBrave/GGmpeg/libflv"
 	"github.com/SmartBrave/GGmpeg/libmpeg"
 )
@@ -31,6 +35,10 @@ type HLS struct {
 	Pat         *libmpeg.PAT
 	TsClipStart bool
 	Cc          map[uint16]uint8 //key:pid
+	Ah          *libaac.AACHeader
+	AvcParser   *libavc.Parser
+	audioCache  *audioCache //copy from livego
+	align       *align
 }
 
 func NewHls() *HLS {
@@ -46,6 +54,12 @@ func NewHls() *HLS {
 		// },
 		TsClipStart: true,
 		Cc:          map[uint16]uint8{},
+		Ah:          &libaac.AACHeader{},
+		AvcParser: &libavc.Parser{
+			Pps: bytes.NewBuffer(make([]byte, libavc.MaxSpsPpsLen)),
+		},
+		audioCache: newAudioCache(),
+		align:      &align{},
 	}
 }
 
@@ -66,8 +80,9 @@ outer:
 			break
 		}
 
+		tag := p.(libflv.Tag)
+		fmt.Printf("11111111111111111111 len(data):%d, tag:%+v\n", len(tag.Data()), tag)
 		if hls.Pat == nil {
-			//TODO
 			hls.Pat = &libmpeg.PAT{
 				TableID:                0x00,
 				SectionSyntaxIndicator: 0x01,
@@ -78,7 +93,7 @@ outer:
 				SectionNumber:          0x00,
 				LastSectionNumber:      0x00,
 				PMTs: map[uint16]*libmpeg.PMT{
-					0x1000: &libmpeg.PMT{
+					libmpeg.PMT_PID: &libmpeg.PMT{
 						TableID:                0x02,
 						SectionSyntaxIndicator: 0x01,
 						SectionLength:          0x17,
@@ -87,16 +102,18 @@ outer:
 						CurrentNextIndicator:   0x01,
 						SectionNumber:          0x00,
 						LastSectionNumber:      0x00,
-						PCR_PID:                0x0100,
+						PCR_PID:                libmpeg.VIDEO_PID,
 						ProgramInfoLength:      0x00,
 						Streams: map[uint16]*libmpeg.PES{
-							0x0100: &libmpeg.PES{
-								// StreamID: 0xc0,
-								StreamID: 0x1b,
-							}, //audio
-							0x0101: &libmpeg.PES{
-								// StreamID: 0xe0,
-								StreamID: 0x0f,
+							//libmpeg.AUDIO_PID: &libmpeg.PES{
+							//	StreamID: 0xc0,
+							//	// StreamID:              0x1b,
+							//	PacketStartCodePrefix: 0x000001,
+							//}, //audio
+							libmpeg.VIDEO_PID: &libmpeg.PES{
+								StreamID: 0xe0,
+								// StreamID:              0x0f,
+								PacketStartCodePrefix: 0x000001,
 							}, //video
 						},
 					},
@@ -104,58 +121,114 @@ outer:
 			}
 		}
 
-		tag := p.(libflv.Tag)
 		var pes *libmpeg.PES
 		var pid uint16
-		frameKey := false
+		videoFrameKey := false
 		var pa *libflv.AudioTag
 		var pv *libflv.VideoTag
+
 		switch tag.GetTagInfo().TagType {
 		case libflv.AUDIO_TAG:
+			continue
 			pa, _ = p.(*libflv.AudioTag)
-			switch pa.SoundFormat {
-			case libflv.FLV_AUDIO_AAC, libflv.FLV_AUDIO_OPUS: //TODO: support MP3...
-				pid = 0x0100
+			switch pa.SoundFormat { //TODO: support MP3...
+			case libflv.FLV_AUDIO_AAC:
+				if pa.AACPacketType == libflv.AAC_SEQUENCE_HEADER {
+					err = hls.Ah.Parse(pa.Data())
+					if err != nil {
+						fmt.Printf("parse aac header error:%+v\n", err)
+					}
+					continue
+				}
+
+				pid = libmpeg.AUDIO_PID
+				pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.AUDIO_PID]
+
+				pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
+				pes.PESPacketLength = uint16(len(tag.Data())) + 5 + 3
+				pes.PTS_DTSFlag = 0x02
+				pes.PESHeaderDataLength = 0x05
+				pes.Index = 0
+
+				aacHeader := hls.Ah.Adts(pa.Data())
+				pes.Data = append(aacHeader, pes.Data...) //XXX performance better?
+
+				rate := 44100
+				if hls.Ah.SampleRate < uint8(len(libaac.AACRates)-1) {
+					rate = libaac.AACRates[hls.Ah.SampleRate]
+					hls.align.align(&pes.DTS, uint32(90000*1024/rate))
+					pes.PTS = pes.DTS
+				}
+
+				hls.audioCache.Cache(pes.Data, pes.PTS)
+				if hls.audioCache.CacheNum() < cache_max_frames {
+					continue
+				}
+				_, pes.PTS, pes.Data = hls.audioCache.GetFrame()
+
+			case libflv.FLV_AUDIO_OPUS:
 			default:
 				continue
 			}
 		case libflv.VIDEO_TAG:
 			pv, _ = p.(*libflv.VideoTag)
-			switch pv.CodecID {
-			case libflv.FLV_VIDEO_AVC, libflv.FLV_VIDEO_HEVC: //TODO: support VVC/AV1...
-				pid = 0x0101
+			switch pv.CodecID { //TODO: support VVC/AV1...
+			case libflv.FLV_VIDEO_AVC:
+				//TODO: AnnexB is supported, AVCC is not!
+				if pv.FrameType == libflv.KEY_FRAME && pv.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
+					err = hls.AvcParser.ParseSpecificInfo(pv.Data())
+					if err != nil {
+						fmt.Printf("parse avc header error:%+v\n", err)
+					}
+					continue
+				}
+
+				if pv.FrameType == libflv.KEY_FRAME {
+					videoFrameKey = true
+				}
+
+				pid = libmpeg.VIDEO_PID
+				pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.VIDEO_PID]
+
+				pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
+				pes.PESPacketLength = uint16(len(tag.Data())) + 5 + 3
+				pes.PTS_DTSFlag = 0x02
+				pes.PESHeaderDataLength = 0x05
+				pes.Index = 0
+
+				if hls.AvcParser.IsNaluHeader(pv.Data()) {
+					pes.Data = pv.Data()
+				} else {
+					buf := bytes.NewBuffer([]byte{})
+					err = hls.AvcParser.GetAnnexbH264(pv.Data(), easyio.NewEasyWriter(buf))
+					if err != nil {
+						fmt.Printf("AvcParser.GetAnnexbH264 error:%+v\n", err)
+						continue
+					}
+					pes.Data, err = io.ReadAll(buf)
+					if err != nil {
+						fmt.Printf("io.ReadAll error:%+v\n", err)
+						continue
+					}
+				}
+
+				if pv.Cts != 0 {
+					//TODO: pes.PESHeaderDataLength = tag.GetTagInfo().DataSize + 0x0a + 3
+					pes.PTS_DTSFlag = 0x03
+					pes.PTS = pes.DTS + uint64(pv.Cts*90)
+					pes.PESPacketLength += 5
+				}
+			case libflv.FLV_VIDEO_HEVC:
 			default:
 				continue
 			}
-			continue
-		case libflv.SCRIPT_DATA_TAG:
-			continue
 		default:
 			continue
 		}
-		pes = hls.Pat.PMTs[0x1000].Streams[pid]
-		pes.PacketStartCodePrefix = 0x000001
-		//TODO PESPacketLength=       tag.GetTagInfo().DataSize + 0x05 + 3
-		pes.PTS_DTSFlag = 0x02
-		pes.PESHeaderDataLength = 0x05
-		pes.PTS = uint64(tag.GetTagInfo().TimeStamp * 90)
-		pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90) //ignore dts with audio
-		pes.Data = tag.Data()
-		pes.Index = 0
-		if pv != nil && pv.Cts != 0 {
-			//TODO: pes.PESHeaderDataLength = tag.GetTagInfo().DataSize + 0x0a + 3
-			pes.PTS_DTSFlag = 0x03
-			pes.PTS = pes.DTS + uint64(pv.Cts*90)
-		}
-		if (pv != nil && pv.FrameType == libflv.KEY_FRAME) ||
-			(pa != nil && pa.AACPacketType == libflv.AAC_SEQUENCE_HEADER) {
-			frameKey = true
-		}
-		fmt.Println("pa:", pa)
 
 		if hls.TsClipStart {
-			_, err1 := libmpeg.NewTs(0x0000, hls.Cc, true).Mux(hls.Pat, false, 0, writer)
-			_, err2 := libmpeg.NewTs(0x1000, hls.Cc, true).Mux(hls.Pat.PMTs[0x1000], false, 0, writer)
+			_, err1 := libmpeg.NewTs(libmpeg.PAT_PID, hls.Cc, true).Mux(hls.Pat, false, 0, writer)
+			_, err2 := libmpeg.NewTs(libmpeg.PMT_PID, hls.Cc, true).Mux(hls.Pat.PMTs[libmpeg.PMT_PID], false, 0, writer)
 			if err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2); err != nil {
 				fmt.Printf("ts.Mux error:%v\n", err)
 				continue
@@ -163,10 +236,10 @@ outer:
 			hls.TsClipStart = false
 		}
 
+		fmt.Printf("3333333333333333333333333333333333 len(data):%d, pes packet length:%d\n", len(pes.Data), pes.PESPacketLength)
 		firstTS := true
-		fmt.Printf("start to write a pes, len(pes.Data):%d\n", len(pes.Data))
 		for {
-			finish, err := libmpeg.NewTs(pid, hls.Cc, firstTS).Mux(pes, frameKey && firstTS, pes.DTS, writer)
+			finish, err := libmpeg.NewTs(pid, hls.Cc, firstTS).Mux(pes, videoFrameKey && firstTS, pes.DTS, writer)
 			if err != nil {
 				fmt.Printf("ts.Mux pes error:%+v", err)
 				continue outer
@@ -176,7 +249,6 @@ outer:
 				break
 			}
 		}
-		fmt.Printf("finish to write a pes, len(pes.Data):%d\n", len(pes.Data))
 	}
 	return nil
 }

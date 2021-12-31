@@ -52,7 +52,7 @@ func (dm *DataMessage) Parse() (err error) {
 		TimeStamp: dm.messageTime,
 		StreamID:  0,
 	}, dm.amf, dm.messagePayload)
-	fmt.Printf("[meta] data_message:%+v\n", dm.metaTag)
+	dm.metaTag.DataSize = uint32(len(dm.metaTag.Data()))
 	return err
 }
 

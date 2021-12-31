@@ -10,6 +10,13 @@ import (
 
 //https://ocw.unican.es/pluginfile.php/171/course/section/78/iso13818-1.pdf
 
+const (
+	PAT_PID   = 0x0000
+	PMT_PID   = 0x1001
+	AUDIO_PID = 0x0101
+	VIDEO_PID = 0x0100
+)
+
 var (
 	INVALID_DATA_ERROR = errors.New("invalid data")
 )
@@ -125,12 +132,11 @@ func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (n int, err error) 
 	}
 
 	if af.PCRFlag == 1 {
-		b = append(b, uint8(af.ProgramClockReferenceBase>>25), uint8(af.ProgramClockReferenceBase>>17), uint8(af.ProgramClockReferenceBase>>9), uint8(af.ProgramClockReferenceBase>>1), ((uint8(af.ProgramClockReferenceBase)&0x01<<7)|0xee)|(uint8(af.ProgramClockReferenceExtension)&0x01))
+		b = append(b, uint8(af.ProgramClockReferenceBase>>25), uint8(af.ProgramClockReferenceBase>>17), uint8(af.ProgramClockReferenceBase>>9), uint8(af.ProgramClockReferenceBase>>1), ((uint8(af.ProgramClockReferenceBase) & 0x01 << 7) | 0x7e) /*|(uint8(af.ProgramClockReferenceExtension)&0x01)*/)
 		b = append(b, uint8(af.ProgramClockReferenceExtension))
 	}
 
 	//TODO
-
 	return len(b), writer.WriteFull(b)
 }
 
@@ -231,7 +237,7 @@ func (ts *TS) DeMux(pidTable map[uint16]PSI, reader easyio.EasyReader) (err erro
 func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.EasyWriter) (finish bool, err error) {
 	var err1, err2, err3 error
 	if firstTSofKeyFrame {
-		ts.AdaptationFieldExist |= 0x20
+		ts.AdaptationFieldExist |= 0x02
 		ts.AdaptationField = &AdaptationField{
 			AdaptationFieldLength:          0x07,
 			RandomAccessIndicator:          0x01,
@@ -253,14 +259,16 @@ func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.Eas
 	fmt.Println("print cc:", ts.ContinuityCounter)
 
 	//AdaptationField
-	if (ts.AdaptationFieldExist|0x20) != 0 && ts.AdaptationField != nil {
+	if (ts.AdaptationFieldExist|0x02) != 0 && ts.AdaptationField != nil {
 		var n int
 		n, err2 = ts.AdaptationField.Marshal(writer)
 		writed += n
 	}
 
-	if ts.PayloadUnitStartIndicator == 0x01 {
-		writer.Write([]byte{0x00})
+	//XXX: better?
+	//XXX: pointer is added in psi only? why pes not?
+	if (ts.PID == PAT_PID || ts.PID == PMT_PID) && ts.PayloadUnitStartIndicator == 0x01 {
+		writer.Write([]byte{ts.PayloadPointer})
 		writed += 1
 	}
 
