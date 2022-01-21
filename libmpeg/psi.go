@@ -13,6 +13,7 @@ import (
 type PSI interface {
 	Parse(easyio.EasyReader) error
 	Marshal(easyio.EasyWriter, int) (int, bool, error)
+	Remain() int
 }
 
 //iso13818-1.pdf: 2.4.4.3
@@ -118,6 +119,14 @@ func (pat *PAT) Marshal(writer easyio.EasyWriter, writable int) (n int, finish b
 		return 0, false, fmt.Errorf("invalid writable:%d with pat", writable)
 	}
 	return len(b), true, writer.WriteFull(b)
+}
+
+func (pat *PAT) Remain() int {
+	bytes := 8 + 4 //header and crc
+	for range pat.PMTs {
+		bytes += 4
+	}
+	return bytes
 }
 
 type PMT struct { //Program Map Table
@@ -251,6 +260,14 @@ func (pmt *PMT) Marshal(writer easyio.EasyWriter, writable int) (n int, finish b
 		return 0, false, fmt.Errorf("invalid writable:%d with pmt", writable)
 	}
 	return len(b), true, writer.WriteFull(b)
+}
+
+func (pmt *PMT) Remain() int {
+	bytes := 12 + 4 //header and crc
+	for range pmt.Streams {
+		bytes += 5
+	}
+	return bytes
 }
 
 type CAT struct{} //Conditional Access Table, PID:0x01

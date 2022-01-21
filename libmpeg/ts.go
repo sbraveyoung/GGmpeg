@@ -47,7 +47,7 @@ type AdaptationField struct {
 	PiecewiseRate                          uint32 //22bit
 	SpliceType                             uint8  //4bit
 	DTSNextAccessUnit                      uint64 //33bit
-	//StuffingBytes                []byte //always 0xFF
+	// StuffingBytesLength                    int    //always 0xFF
 }
 
 func NewAdaptationField() (af *AdaptationField) {
@@ -125,19 +125,30 @@ func (af *AdaptationField) Parse(reader easyio.EasyReader) (err error) {
 	return easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5, err6, err7, err8)
 }
 
-func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (n int, err error) {
-	b := []byte{
-		af.AdaptationFieldLength,
-		((af.DiscontinuityIndicator << 7) & 0x80) | ((af.RandomAccessIndicator << 6) & 0x40) | ((af.ElementaryStreamPriority << 5) & 0x20) | ((af.PCRFlag << 4) & 0x10) | ((af.OPCRFlag << 3) & 0x08) | ((af.SplicingPointFlag << 2) & 0x04) | ((af.TransportPrivateDataFlag << 1) & 0x02) | (af.AdaptationFieldExtensionFlag & 0x01),
+func (af *AdaptationField) Marshal(writer easyio.EasyWriter) (n uint8, err error) {
+	if af.AdaptationFieldLength < 1 {
+		return 0, fmt.Errorf("invalid1 AdaptationFieldLength:%d", af.AdaptationFieldLength)
 	}
+
+	b := make([]byte, 0, af.AdaptationFieldLength+1)
+	b = append(b, af.AdaptationFieldLength)
+	b = append(b, ((af.DiscontinuityIndicator<<7)&0x80)|((af.RandomAccessIndicator<<6)&0x40)|((af.ElementaryStreamPriority<<5)&0x20)|((af.PCRFlag<<4)&0x10)|((af.OPCRFlag<<3)&0x08)|((af.SplicingPointFlag<<2)&0x04)|((af.TransportPrivateDataFlag<<1)&0x02)|(af.AdaptationFieldExtensionFlag&0x01))
 
 	if af.PCRFlag == 1 {
-		b = append(b, uint8(af.ProgramClockReferenceBase>>25), uint8(af.ProgramClockReferenceBase>>17), uint8(af.ProgramClockReferenceBase>>9), uint8(af.ProgramClockReferenceBase>>1), ((uint8(af.ProgramClockReferenceBase) & 0x01 << 7) | 0x7e) /*|(uint8(af.ProgramClockReferenceExtension)&0x01)*/)
-		b = append(b, uint8(af.ProgramClockReferenceExtension))
+		if af.AdaptationFieldLength < 7 {
+			return 0, fmt.Errorf("invalid2 AdaptationFieldLength:%d", af.AdaptationFieldLength)
+		}
+		b = append(b, uint8(af.ProgramClockReferenceBase>>25), uint8(af.ProgramClockReferenceBase>>17), uint8(af.ProgramClockReferenceBase>>9), uint8(af.ProgramClockReferenceBase>>1), ((uint8(af.ProgramClockReferenceBase) & 0x01 << 7) | 0x7e), uint8(af.ProgramClockReferenceExtension) /*|(uint8(af.ProgramClockReferenceExtension)&0x01)*/)
 	}
 
-	//TODO
-	return len(b), writer.WriteFull(b)
+	var err1, err2 error
+
+	err1 = writer.WriteFull(b)
+	if len(b) < cap(b) {
+		err2 = Fill0XFF(writer, cap(b)-len(b))
+	}
+
+	return af.AdaptationFieldLength + 1, easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 }
 
 type TS struct {
@@ -235,7 +246,9 @@ func (ts *TS) DeMux(pidTable map[uint16]PSI, reader easyio.EasyReader) (err erro
 }
 
 func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.EasyWriter) (finish bool, err error) {
-	var err1, err2, err3 error
+	var writable uint8 = 188
+	var err1, err2, err3, err4 error
+
 	if firstTSofKeyFrame {
 		ts.AdaptationFieldExist |= 0x02
 		ts.AdaptationField = &AdaptationField{
@@ -247,7 +260,20 @@ func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.Eas
 		}
 	}
 
-	writed := 0
+	if ts.PID == AUDIO_PID || ts.PID == VIDEO_PID {
+		var headerSize uint8 = 4 //ts header
+		if firstTSofKeyFrame {
+			headerSize += 8 //adaptation length
+		} else {
+			ts.AdaptationField = &AdaptationField{}
+		}
+
+		if remain := psi.Remain(); remain < int(writable-headerSize) {
+			ts.AdaptationFieldExist |= 0x02
+			ts.AdaptationField.AdaptationFieldLength = uint8(int(writable-headerSize) - remain - 1)
+		}
+	}
+
 	b := []byte{
 		ts.SyncByte,
 		((ts.TransportErrorIndicator << 7) & 0x80) | ((ts.PayloadUnitStartIndicator << 6) & 0x40) | ((ts.TransportPriority << 5) & 0x20) | (uint8(ts.PID>>8) & 0x1f),
@@ -255,31 +281,35 @@ func (ts *TS) Mux(psi PSI, firstTSofKeyFrame bool, dts uint64, writer easyio.Eas
 		((ts.TransportScramblingControl << 6) & 0xc0) | ((ts.AdaptationFieldExist << 4) & 0x30) | (ts.ContinuityCounter & 0x0f),
 	}
 	err1 = writer.WriteFull(b)
-	writed += len(b)
-	fmt.Println("print cc:", ts.ContinuityCounter)
+	writable -= uint8(len(b))
 
 	//AdaptationField
-	if (ts.AdaptationFieldExist|0x02) != 0 && ts.AdaptationField != nil {
-		var n int
+	if (ts.AdaptationFieldExist&0x02) != 0 && ts.AdaptationField != nil {
+		var n uint8
 		n, err2 = ts.AdaptationField.Marshal(writer)
-		writed += n
+		writable -= n
 	}
 
 	//XXX: better?
 	//XXX: pointer is added in psi only? why pes not?
 	if (ts.PID == PAT_PID || ts.PID == PMT_PID) && ts.PayloadUnitStartIndicator == 0x01 {
 		writer.Write([]byte{ts.PayloadPointer})
-		writed += 1
+		writable -= 1
 	}
 
-	n, finish, err3 := psi.Marshal(writer, 188-writed)
-	writed += n
+	n, finish, err3 := psi.Marshal(writer, int(writable))
+	writable -= uint8(n)
 
-	for i := 0; i < 188-writed; i++ {
+	err4 = Fill0XFF(writer, int(writable))
+	return finish, easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4)
+}
+
+func Fill0XFF(writer easyio.EasyWriter, n int) (err error) {
+	for i := 0; i < n; i++ {
 		err = writer.WriteFull([]byte{0xff})
 		if err != nil {
-			break
+			return
 		}
 	}
-	return finish, easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
+	return nil
 }

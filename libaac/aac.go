@@ -35,5 +35,6 @@ func (ah *AACHeader) Adts(data []byte) (header []byte) {
 		((ah.Channel << 2) << 4) | uint8((frameLen<<3)>>14),
 		uint8((frameLen << 5) >> 8),
 		uint8(((frameLen<<13)>>13)<<5) | ((0x7c << 1) >> 3),
+		0xfc,
 	}
 }

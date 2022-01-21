@@ -42,6 +42,8 @@ type PES struct {
 	ESRate        uint32 //22bit
 	Data          []byte
 	Index         int
+	HeaderData    []byte
+	HeaderIndex   int
 }
 
 func NewPES() (pes *PES) {
@@ -209,12 +211,60 @@ func (pes *PES) Parse(reader easyio.EasyReader) (err error) {
 	return nil
 }
 
-func (pes *PES) Marshal(writer easyio.EasyWriter, writable int) (n int, finish bool, err error) {
-	fmt.Printf("writable:%d, pes.StreamID:%x, pts:%d, dts:%d, pes.Index:%d, len(pes.Data):%d\n", writable, pes.StreamID, pes.PTS, pes.DTS, pes.Index, len(pes.Data))
+func (pes *PES) Marshal(writer easyio.EasyWriter, writable int) (writed int, finish bool, err error) {
 	var err1, err2 error
-	var b []byte
+	if writable <= 0 {
+		err = fmt.Errorf("invalid arg of writable:%d", writable)
+		return
+	}
+	defer func() {
+		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
+	}()
+
+	if pes.HeaderIndex < len(pes.HeaderData) {
+		if writable-writed >= len(pes.HeaderData)-pes.HeaderIndex { //write full
+			err1 = writer.WriteFull(pes.HeaderData[pes.HeaderIndex:])
+			writed += len(pes.HeaderData) - pes.HeaderIndex
+			pes.HeaderIndex = len(pes.HeaderData)
+		} else {
+			err1 = writer.WriteFull(pes.HeaderData[pes.HeaderIndex : pes.HeaderIndex+(writable-writed)])
+			writed += (writable - writed)
+			finish = false
+			return
+		}
+	}
+
+	if pes.Index < len(pes.Data) {
+		if writable-writed >= len(pes.Data)-pes.Index { //write full
+			err2 = writer.WriteFull(pes.Data[pes.Index:])
+			writed += len(pes.Data) - pes.Index
+			pes.Index = len(pes.Data)
+			finish = true
+			return
+		} else {
+			err2 = writer.WriteFull(pes.Data[pes.Index : pes.Index+(writable-writed)])
+			pes.Index += (writable - writed)
+			writed += writable - writed
+			finish = false
+			return
+		}
+	}
+	finish = true
+	return
+}
+
+func (pes *PES) Remain() int {
 	if pes.Index == 0 {
-		b = []byte{
+		size := len(pes.Data) + 5 + 3
+		if pes.PTS != pes.DTS {
+			size += 5
+		}
+		if size > 0xffff {
+			size = 0
+		}
+		pes.PESPacketLength = uint16(size)
+		//XXX: sync.Pool
+		pes.HeaderData = []byte{
 			uint8(pes.PacketStartCodePrefix >> 16),
 			uint8(pes.PacketStartCodePrefix >> 8),
 			uint8(pes.PacketStartCodePrefix),
@@ -223,34 +273,18 @@ func (pes *PES) Marshal(writer easyio.EasyWriter, writable int) (n int, finish b
 			uint8(pes.PESPacketLength),
 		}
 		if pes.StreamID != 0xbc && pes.StreamID != 0xbe && pes.StreamID != 0xbf && pes.StreamID != 0xf0 && pes.StreamID != 0xf1 && pes.StreamID != 0xff && pes.StreamID != 0xf2 && pes.StreamID != 0xf8 {
-			b = append(b, 0x80) //ignore other useless fields
+			pes.HeaderData = append(pes.HeaderData, 0x80) //ignore other useless fields
 			if pes.PTS == pes.DTS {
-				b = append(b, 0x80, 0x05)
-				b = append(b, 0x21|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
+				pes.HeaderData = append(pes.HeaderData, 0x80, 0x05)
+				pes.HeaderData = append(pes.HeaderData, 0x21|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
 			} else {
-				b = append(b, 0xc0, 0x0a)
-				b = append(b, 0x31|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
-				b = append(b, 0x11|(uint8(pes.DTS>>29)&0x0e), uint8(pes.DTS>>22), (uint8(pes.DTS>>14)&0xfe)|0x01, uint8(pes.DTS>>7), (uint8(pes.DTS<<1)&0xfe)|0x01)
+				pes.HeaderData = append(pes.HeaderData, 0xc0, 0x0a)
+				pes.HeaderData = append(pes.HeaderData, 0x31|(uint8(pes.PTS>>29)&0x0e), uint8(pes.PTS>>22), (uint8(pes.PTS>>14)&0xfe)|0x01, uint8(pes.PTS>>7), (uint8(pes.PTS<<1)&0xfe)|0x01)
+				pes.HeaderData = append(pes.HeaderData, 0x11|(uint8(pes.DTS>>29)&0x0e), uint8(pes.DTS>>22), (uint8(pes.DTS>>14)&0xfe)|0x01, uint8(pes.DTS>>7), (uint8(pes.DTS<<1)&0xfe)|0x01)
 			}
 		}
-
-		fmt.Printf("11111111111111111111 len(p.data):%d, pes header:%x\n", len(pes.Data), b)
-		if writable < len(b) {
-			return 0, false, fmt.Errorf("invalid writable:%d with pes", writable)
-		}
-		err1 = writer.WriteFull(b)
-		writable -= len(b)
+		return len(pes.HeaderData) + len(pes.Data)
 	}
+	return (len(pes.HeaderData) - pes.HeaderIndex) + (len(pes.Data) - pes.Index)
 
-	if writable > len(pes.Data)-pes.Index {
-		writable = len(pes.Data) - pes.Index
-	}
-	if pes.Index+writable > len(pes.Data) {
-		writable = len(pes.Data) - pes.Index
-	}
-
-	n, err2 = writer.Write(pes.Data[pes.Index : pes.Index+writable])
-	pes.Index += writable
-
-	return len(b) + writable, pes.Index == len(pes.Data), easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2)
 }

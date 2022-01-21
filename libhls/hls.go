@@ -72,6 +72,43 @@ func (hls *HLS) Start(gopReader *broadcast.BroadcastReader) (err error) {
 	defer tsFile.Close()
 	writer := easyio.NewEasyWriter(tsFile)
 
+	hls.Pat = &libmpeg.PAT{
+		TableID:                0x00,
+		SectionSyntaxIndicator: 0x01,
+		SectionLength:          0x0d,
+		TransportStreamID:      0x01,
+		VersionNumber:          0x00,
+		CurrentNextIndicator:   0x01,
+		SectionNumber:          0x00,
+		LastSectionNumber:      0x00,
+		PMTs: map[uint16]*libmpeg.PMT{
+			libmpeg.PMT_PID: &libmpeg.PMT{
+				TableID:                0x02,
+				SectionSyntaxIndicator: 0x01,
+				SectionLength:          0x17,
+				ProgramNumber:          0x01,
+				VersionNumber:          0x00,
+				CurrentNextIndicator:   0x01,
+				SectionNumber:          0x00,
+				LastSectionNumber:      0x00,
+				PCR_PID:                libmpeg.VIDEO_PID,
+				ProgramInfoLength:      0x00,
+				Streams: map[uint16]*libmpeg.PES{
+					libmpeg.AUDIO_PID: &libmpeg.PES{
+						StreamID: 0xc0,
+						// StreamID:              0x1b,
+						PacketStartCodePrefix: 0x000001,
+					}, //audio
+					libmpeg.VIDEO_PID: &libmpeg.PES{
+						StreamID: 0xe0,
+						// StreamID:              0x0f,
+						PacketStartCodePrefix: 0x000001,
+					}, //video
+				},
+			},
+		},
+	}
+
 outer:
 	for {
 		p, alive := gopReader.Read()
@@ -81,45 +118,6 @@ outer:
 		}
 
 		tag := p.(libflv.Tag)
-		fmt.Printf("11111111111111111111 len(data):%d, tag:%+v\n", len(tag.Data()), tag)
-		if hls.Pat == nil {
-			hls.Pat = &libmpeg.PAT{
-				TableID:                0x00,
-				SectionSyntaxIndicator: 0x01,
-				SectionLength:          0x0d,
-				TransportStreamID:      0x01,
-				VersionNumber:          0x00,
-				CurrentNextIndicator:   0x01,
-				SectionNumber:          0x00,
-				LastSectionNumber:      0x00,
-				PMTs: map[uint16]*libmpeg.PMT{
-					libmpeg.PMT_PID: &libmpeg.PMT{
-						TableID:                0x02,
-						SectionSyntaxIndicator: 0x01,
-						SectionLength:          0x17,
-						ProgramNumber:          0x01,
-						VersionNumber:          0x00,
-						CurrentNextIndicator:   0x01,
-						SectionNumber:          0x00,
-						LastSectionNumber:      0x00,
-						PCR_PID:                libmpeg.VIDEO_PID,
-						ProgramInfoLength:      0x00,
-						Streams: map[uint16]*libmpeg.PES{
-							//libmpeg.AUDIO_PID: &libmpeg.PES{
-							//	StreamID: 0xc0,
-							//	// StreamID:              0x1b,
-							//	PacketStartCodePrefix: 0x000001,
-							//}, //audio
-							libmpeg.VIDEO_PID: &libmpeg.PES{
-								StreamID: 0xe0,
-								// StreamID:              0x0f,
-								PacketStartCodePrefix: 0x000001,
-							}, //video
-						},
-					},
-				},
-			}
-		}
 
 		var pes *libmpeg.PES
 		var pid uint16
@@ -129,7 +127,6 @@ outer:
 
 		switch tag.GetTagInfo().TagType {
 		case libflv.AUDIO_TAG:
-			continue
 			pa, _ = p.(*libflv.AudioTag)
 			switch pa.SoundFormat { //TODO: support MP3...
 			case libflv.FLV_AUDIO_AAC:
@@ -145,26 +142,27 @@ outer:
 				pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.AUDIO_PID]
 
 				pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
-				pes.PESPacketLength = uint16(len(tag.Data())) + 5 + 3
 				pes.PTS_DTSFlag = 0x02
 				pes.PESHeaderDataLength = 0x05
 				pes.Index = 0
+				pes.HeaderIndex = 0
 
 				aacHeader := hls.Ah.Adts(pa.Data())
-				pes.Data = append(aacHeader, pes.Data...) //XXX performance better?
+				pes.Data = append(aacHeader, pa.Data()...) //XXX performance better?
 
 				rate := 44100
-				if hls.Ah.SampleRate < uint8(len(libaac.AACRates)-1) {
+				if hls.Ah.SampleRate <= uint8(len(libaac.AACRates)-1) {
 					rate = libaac.AACRates[hls.Ah.SampleRate]
-					hls.align.align(&pes.DTS, uint32(90000*1024/rate))
-					pes.PTS = pes.DTS
 				}
+				hls.align.align(&pes.DTS, uint32(90000*1024/rate))
+				pes.PTS = pes.DTS
 
 				hls.audioCache.Cache(pes.Data, pes.PTS)
 				if hls.audioCache.CacheNum() < cache_max_frames {
 					continue
 				}
 				_, pes.PTS, pes.Data = hls.audioCache.GetFrame()
+				pes.DTS = pes.PTS
 
 			case libflv.FLV_AUDIO_OPUS:
 			default:
@@ -191,10 +189,11 @@ outer:
 				pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.VIDEO_PID]
 
 				pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
-				pes.PESPacketLength = uint16(len(tag.Data())) + 5 + 3
+				pes.PTS = pes.DTS
 				pes.PTS_DTSFlag = 0x02
 				pes.PESHeaderDataLength = 0x05
 				pes.Index = 0
+				pes.HeaderIndex = 0
 
 				if hls.AvcParser.IsNaluHeader(pv.Data()) {
 					pes.Data = pv.Data()
@@ -213,10 +212,8 @@ outer:
 				}
 
 				if pv.Cts != 0 {
-					//TODO: pes.PESHeaderDataLength = tag.GetTagInfo().DataSize + 0x0a + 3
 					pes.PTS_DTSFlag = 0x03
 					pes.PTS = pes.DTS + uint64(pv.Cts*90)
-					pes.PESPacketLength += 5
 				}
 			case libflv.FLV_VIDEO_HEVC:
 			default:
@@ -236,7 +233,6 @@ outer:
 			hls.TsClipStart = false
 		}
 
-		fmt.Printf("3333333333333333333333333333333333 len(data):%d, pes packet length:%d\n", len(pes.Data), pes.PESPacketLength)
 		firstTS := true
 		for {
 			finish, err := libmpeg.NewTs(pid, hls.Cc, firstTS).Mux(pes, videoFrameKey && firstTS, pes.DTS, writer)
