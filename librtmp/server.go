@@ -24,6 +24,7 @@ type server struct {
 	rtmpAddress string          //default: ":1935"
 	flvAddress  string          //default: ""
 	hlsAddress  string          //default: ""
+	rtspAddress string          //default: ""
 	apps        map[string]*App //appName, roomID, *room
 }
 
@@ -62,6 +63,15 @@ func (s *server) WithDASH() *server {
 	return s
 }
 
+// WithRTSP enables an RTSP/1.0 PLAY-only listener on the given address
+// (default :554 in production). Streams are addressed as
+// rtsp://host:port/<app>/<streamID>; transport is RTP-over-RTSP TCP
+// interleaved, video is H.264 single-NAL/FU-A, audio is AAC-hbr.
+func (s *server) WithRTSP(address string) *server {
+	s.rtspAddress = address
+	return s
+}
+
 func (s *server) SetHlsMode(appName string, mode libhls.HLS_MODE) *server {
 	if _, ok := s.apps[appName]; !ok {
 		panic("appName does not exist.")
@@ -97,6 +107,16 @@ func (s *server) Handler() error {
 		go func() {
 			if err := s.handleHls(wg); err != nil {
 				fmt.Println("handleHls error:", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
+	if s.rtspAddress != "" {
+		wg.Add(1)
+		go func() {
+			if err := s.handleRTSP(wg); err != nil {
+				fmt.Println("handleRTSP error:", err)
 				os.Exit(1)
 			}
 		}()
@@ -409,6 +429,24 @@ func (s *server) serveDASH(w http.ResponseWriter, r *http.Request, dash *libdash
 		http.ServeFile(w, r, full)
 	default:
 		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// handleRTSP runs the RTSP TCP listener. Each accepted connection
+// becomes one rtspSession running in its own goroutine.
+func (s *server) handleRTSP(wg *sync.WaitGroup) error {
+	listener, err := newTCPListener(s.rtspAddress)
+	if err != nil {
+		fmt.Println("New RTSP listener error:", err)
+		return err
+	}
+	wg.Done()
+	for {
+		conn, err := listener.AcceptTCP()
+		if err != nil {
+			return err
+		}
+		go newRTSPSession(conn, s).run()
 	}
 }
 
