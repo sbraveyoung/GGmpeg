@@ -8,12 +8,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
+	"github.com/SmartBrave/GGmpeg/libdash"
 	"github.com/SmartBrave/GGmpeg/libhls"
 )
 
@@ -45,6 +48,17 @@ func (s *server) WithHls(address string) *server {
 		s.apps[app].hlsMode = libhls.IMMEDIATELY
 	}
 	s.hlsAddress = address
+	return s
+}
+
+// WithDASH enables CMAF / MPEG-DASH segmenting on every app. Reuses the
+// HLS HTTP listener — manifest path is /<app>/<stream>/index.mpd and
+// segments live alongside HLS .ts files under <hlsDir>. Must be called
+// after WithHls so an HTTP listener exists.
+func (s *server) WithDASH() *server {
+	for app := range s.apps {
+		s.apps[app].dashEnabled = true
+	}
 	return s
 }
 
@@ -157,6 +171,33 @@ func (s *server) handleHTTPFlv(wg *sync.WaitGroup) error {
 			return
 		}
 
+		//WebSocket-FLV: same URL, but client sends Upgrade: websocket.
+		//Used by flv.js when the page is loaded over https or when the
+		//user wants to multiplex the stream over an existing WS proxy.
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			ws, err := upgradeWebSocket(w, r)
+			if err != nil {
+				fmt.Println("websocket upgrade error:", err)
+				return
+			}
+			defer ws.Close()
+			stop := make(chan struct{})
+			//Drain client-originated frames (ping/close) in the
+			//background so the OS-level read buffer never stalls the
+			//writer side.
+			go ws.servePings(stop)
+			done := make(chan struct{})
+			go func() {
+				room.FLVJoin(easyio.NewEasyWriter(&wsWriter{ws: ws}))
+				close(done)
+			}()
+			select {
+			case <-stop:
+			case <-done:
+			}
+			return
+		}
+
 		w.Header().Set("Content-Type", "video/x-flv")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,OPTIONS,HEAD")
@@ -254,9 +295,50 @@ func (s *server) handleHls(wg *sync.WaitGroup) error {
 			}
 		}
 
+		//DASH dispatch (manifest + init + media segments). Lazy-start
+		//if WithDASH is on but no DASH instance exists yet.
+		switch {
+		case file == "index.mpd",
+			strings.HasSuffix(file, "-init.mp4"),
+			strings.HasSuffix(file, ".m4s"):
+			dash := app.LoadDASH(roomID)
+			if dash == nil && app.dashEnabled {
+				dash = libdash.NewDASH().WithStreamID(roomID).WithDir(app.dashDir)
+				app.StoreDASH(roomID, dash)
+				go dash.Start(broadcast.NewBroadcastReader(room.GOP))
+				dash.WaitFirstSegment()
+			}
+			if dash == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			s.serveDASH(w, r, dash, file)
+			return
+		}
+
 		switch {
 		case strings.HasSuffix(file, ".m3u8"):
-			playlist := hls.Playlist()
+			//LL-HLS blocking playlist reload: clients append
+			//_HLS_msn=<seq>&_HLS_part=<idx> to ask the server to delay
+			//the response until that media-sequence/part has been
+			//produced. Falls back to a normal (non-blocking) reply
+			//when those params are absent or the segmenter doesn't
+			//have LL enabled.
+			q := r.URL.Query()
+			var playlist []byte
+			if msnStr := q.Get("_HLS_msn"); msnStr != "" {
+				msn, _ := strconv.Atoi(msnStr)
+				part, _ := strconv.Atoi(q.Get("_HLS_part"))
+				//Apple recommends timeout ~= 3 * PART-TARGET; use 3 s
+				//as a safe floor so even non-LL mode answers promptly.
+				timeout := 3 * hls.PartTargetDur()
+				if timeout < time.Second {
+					timeout = time.Second
+				}
+				playlist = hls.WaitForPlaylist(msn, part, timeout)
+			} else {
+				playlist = hls.Playlist()
+			}
 			if len(playlist) == 0 {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -284,6 +366,50 @@ func (s *server) handleHls(wg *sync.WaitGroup) error {
 	})
 	wg.Done()
 	return http.Serve(hlsListener, mux)
+}
+
+// serveDASH handles the three URL shapes a DASH player asks for:
+//   index.mpd            → dynamic manifest
+//   <stream>-init.mp4    → init segment (ftyp + moov)
+//   <stream>-<seq>.m4s   → media segment (moof + mdat)
+// Both file types are static under dash.Dir() so http.ServeFile is the
+// right tool — and it handles Range requests for free, which is useful
+// if/when we add CMAF byte-range chunked-transfer mode.
+func (s *server) serveDASH(w http.ResponseWriter, r *http.Request, dash *libdash.DASH, file string) {
+	switch {
+	case file == "index.mpd":
+		mpd := dash.Manifest()
+		if len(mpd) == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/dash+xml")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(mpd)
+	case strings.HasSuffix(file, "-init.mp4"):
+		full := filepath.Join(dash.Dir(), file)
+		rel, err := filepath.Rel(dash.Dir(), full)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		http.ServeFile(w, r, full)
+	case strings.HasSuffix(file, ".m4s"):
+		full := filepath.Join(dash.Dir(), file)
+		rel, err := filepath.Rel(dash.Dir(), full)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "video/iso.segment")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		http.ServeFile(w, r, full)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
 }
 
 func newTCPListener(addr string) (listener *net.TCPListener, err error) {

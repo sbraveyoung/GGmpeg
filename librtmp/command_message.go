@@ -10,6 +10,7 @@ import (
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
 	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/SmartBrave/GGmpeg/libdash"
 	"github.com/SmartBrave/GGmpeg/libhls"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
@@ -272,6 +273,11 @@ func (cm *CommandMessage) Do() (err error) {
 			hls := libhls.NewHls().WithStreamID(cm.PublishingName).WithDir(app.hlsDir)
 			app.hls.Store(cm.PublishingName, hls)
 			go hls.Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
+		}
+		if app.dashEnabled {
+			dash := libdash.NewDASH().WithStreamID(cm.PublishingName).WithDir(app.dashDir)
+			app.StoreDASH(cm.PublishingName, dash)
+			go dash.Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
 		}
 
 	case PLAY:

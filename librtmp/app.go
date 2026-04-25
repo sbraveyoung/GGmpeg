@@ -3,15 +3,19 @@ package librtmp
 import (
 	"sync"
 
+	"github.com/SmartBrave/GGmpeg/libdash"
 	"github.com/SmartBrave/GGmpeg/libhls"
 )
 
 type App struct {
-	appName string
-	rooms   *sync.Map //roomID, *Room
-	hlsMode libhls.HLS_MODE
-	hlsDir  string
-	hls     *sync.Map //roomID, *libhls.HLS
+	appName     string
+	rooms       *sync.Map //roomID, *Room
+	hlsMode     libhls.HLS_MODE
+	hlsDir      string
+	hls         *sync.Map //roomID, *libhls.HLS
+	dashEnabled bool
+	dashDir     string
+	dash        *sync.Map //roomID, *libdash.DASH
 }
 
 func NewApp(appName string) *App {
@@ -21,6 +25,8 @@ func NewApp(appName string) *App {
 		hlsMode: libhls.NONE,
 		hlsDir:  "./data",
 		hls:     &sync.Map{},
+		dashDir: "./data",
+		dash:    &sync.Map{},
 	}
 }
 
@@ -42,6 +48,11 @@ func (app *App) Delete(roomID string) {
 			hls.Stop()
 		}
 	}
+	if d, ok := app.dash.LoadAndDelete(roomID); ok {
+		if dash, ok := d.(*libdash.DASH); ok {
+			dash.Stop()
+		}
+	}
 	app.rooms.Delete(roomID)
 }
 
@@ -55,4 +66,16 @@ func (app *App) LoadHLS(roomID string) *libhls.HLS {
 
 func (app *App) StoreHLS(roomID string, hls *libhls.HLS) {
 	app.hls.Store(roomID, hls)
+}
+
+func (app *App) LoadDASH(roomID string) *libdash.DASH {
+	d, ok := app.dash.Load(roomID)
+	if !ok {
+		return nil
+	}
+	return d.(*libdash.DASH)
+}
+
+func (app *App) StoreDASH(roomID string, dash *libdash.DASH) {
+	app.dash.Store(roomID, dash)
 }

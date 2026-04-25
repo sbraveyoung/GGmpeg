@@ -38,6 +38,12 @@ const (
 // that starts decoding mid-segment can resync quickly.
 const psiInterval = 100 * time.Millisecond
 
+// defaultPartTargetDur is the LL-HLS partial-segment target. Apple's
+// guidance is "PART-TARGET should be set to a value approximating the
+// frame interval"; ~333 ms (one third of a 1-s window) is a common
+// choice that balances overhead against player buffer freshness.
+const defaultPartTargetDur = 333 * time.Millisecond
+
 // HLS is the per-stream transcoder. A single publisher owns one HLS
 // instance; all mutable state (CC counters, PES parsers, segment list)
 // is therefore not concurrent-write, but readers (playlist fetchers)
@@ -51,10 +57,12 @@ type HLS struct {
 	Version int //3
 
 	// config — set once before Start().
-	streamID   string
-	dir        string
-	targetDur  time.Duration
-	windowSize int
+	streamID      string
+	dir           string
+	targetDur     time.Duration
+	windowSize    int
+	llEnabled     bool
+	partTargetDur time.Duration
 
 	// PAT/PMT template built at Start. Held read-only once populated.
 	Pat *libmpeg.PAT
@@ -66,30 +74,51 @@ type HLS struct {
 	audioCache *audioCache
 	align      *align
 
-	// segmenter state
-	mu              sync.RWMutex
-	segments        []segmentInfo
-	nextSeq         int
+	// Writer-only state (mutated only by Start's goroutine, no mutex).
 	currentFile     *os.File
 	currentWriter   easyio.EasyWriter
 	currentStartDTS uint64
 	currentEndDTS   uint64
+	partStartDTS    uint64
+	partStartOffset int64
+	currentBytes    int64 //running offset into currentFile
 	lastPSI         time.Time
 
+	// Shared state — protected by mu / cond. mu is a plain Mutex so it
+	// can satisfy sync.Cond's Locker contract (RWMutex would funnel
+	// every Wait into the writer half, defeating the point).
+	mu             sync.Mutex
+	cond           *sync.Cond
+	segments       []segmentInfo
+	nextSeq        int
+	currentParts   []partInfo //LL-HLS: parts of the in-progress segment
+	currentSegName string     //basename of in-progress segment, "" if none
+
 	// coordination
-	ready       chan struct{}
-	readyOnce   sync.Once
-	stopped     int32 //atomic
+	ready     chan struct{}
+	readyOnce sync.Once
+	stopped   int32 //atomic
+}
+
+// partInfo describes one LL-HLS partial segment. URI is always the
+// parent segment's filename; the player addresses the bytes via the
+// BYTERANGE attribute (length@offset).
+type partInfo struct {
+	duration    float64
+	independent bool //starts with a keyframe
+	byteOffset  int64
+	byteLength  int64
 }
 
 func NewHls() *HLS {
-	return &HLS{
-		Version:    3,
-		dir:        "./data",
-		targetDur:  2 * time.Second,
-		windowSize: 6,
-		Cc:         map[uint16]uint8{},
-		Ah:         &libaac.AACHeader{},
+	h := &HLS{
+		Version:       3,
+		dir:           "./data",
+		targetDur:     2 * time.Second,
+		windowSize:    6,
+		partTargetDur: defaultPartTargetDur,
+		Cc:            map[uint16]uint8{},
+		Ah:            &libaac.AACHeader{},
 		AvcParser: &libavc.Parser{
 			Pps: bytes.NewBuffer(make([]byte, libavc.MaxSpsPpsLen)),
 		},
@@ -97,7 +126,25 @@ func NewHls() *HLS {
 		align:      &align{},
 		ready:      make(chan struct{}),
 	}
+	h.cond = sync.NewCond(&h.mu)
+	return h
 }
+
+// WithLowLatency enables LL-HLS partial-segment emission. Playlists
+// produced by Playlist() will then advertise EXT-X-PART-INF and
+// EXT-X-PART entries; clients that don't understand LL-HLS extensions
+// silently ignore them.
+func (hls *HLS) WithLowLatency(on bool) *HLS {
+	hls.llEnabled = on
+	return hls
+}
+
+// PartTargetDur reports the configured LL-HLS partial-segment target
+// duration. Used by the playlist builder.
+func (hls *HLS) PartTargetDur() time.Duration { return hls.partTargetDur }
+
+// LowLatency reports whether LL-HLS extensions are enabled.
+func (hls *HLS) LowLatency() bool { return hls.llEnabled }
 
 // WithStreamID sets the stream identifier used in the segment
 // filenames and served playlist.
@@ -119,15 +166,90 @@ func (hls *HLS) WithDir(dir string) *HLS {
 func (hls *HLS) Dir() string { return hls.dir }
 
 // Playlist renders the current live playlist. Returns nil until the
-// first segment has been closed and added to the window.
+// first segment has been closed and added to the window. When LL-HLS
+// is enabled, partial-segment metadata for the in-progress segment is
+// included so blocking-reload clients see the freshest possible view.
 func (hls *HLS) Playlist() []byte {
-	hls.mu.RLock()
-	defer hls.mu.RUnlock()
-	if len(hls.segments) == 0 {
+	hls.mu.Lock()
+	defer hls.mu.Unlock()
+	if len(hls.segments) == 0 && !hls.llEnabled {
 		return nil
 	}
-	return buildPlaylist(hls.segments)
+	if !hls.llEnabled {
+		return buildPlaylist(hls.segments)
+	}
+	return buildLLPlaylist(playlistInputs{
+		segments:      hls.segments,
+		nextSeq:       hls.nextSeq,
+		currentParts:  append([]partInfo(nil), hls.currentParts...),
+		currentName:   hls.currentSegName,
+		partTargetDur: hls.partTargetDur,
+	})
 }
+
+// WaitForPlaylist returns the LL-HLS playlist for which the given
+// _HLS_msn / _HLS_part has become available. If wantMSN is negative
+// the call returns immediately with whatever is current. Times out
+// after timeout (returns the current playlist anyway, matching the
+// "respond with stale playlist" guidance from Apple's spec).
+func (hls *HLS) WaitForPlaylist(wantMSN int, wantPart int, timeout time.Duration) []byte {
+	deadline := time.Now().Add(timeout)
+	hls.mu.Lock()
+	for {
+		if !hls.llEnabled || wantMSN < 0 {
+			break
+		}
+		latestMSN := hls.nextSeq - 1
+		latestPart := -1
+		if hls.currentSegName != "" {
+			latestMSN = hls.nextSeq
+			latestPart = len(hls.currentParts) - 1
+		}
+		if wantMSN < latestMSN || (wantMSN == latestMSN && wantPart <= latestPart) {
+			break
+		}
+		now := time.Now()
+		if !now.Before(deadline) {
+			break
+		}
+		//Cond.Wait releases mu while parked; broadcasts come from the
+		//writer goroutine after each part is recorded.
+		waitCh := make(chan struct{})
+		go func(d time.Duration) {
+			time.Sleep(d)
+			hls.mu.Lock()
+			hls.cond.Broadcast()
+			hls.mu.Unlock()
+			close(waitCh)
+		}(deadline.Sub(now))
+		hls.cond.Wait()
+		select {
+		case <-waitCh:
+		default:
+		}
+	}
+	if len(hls.segments) == 0 && !hls.llEnabled {
+		hls.mu.Unlock()
+		return nil
+	}
+	if !hls.llEnabled {
+		out := buildPlaylist(hls.segments)
+		hls.mu.Unlock()
+		return out
+	}
+	out := buildLLPlaylist(playlistInputs{
+		segments:      hls.segments,
+		nextSeq:       hls.nextSeq,
+		currentParts:  append([]partInfo(nil), hls.currentParts...),
+		currentName:   hls.currentSegName,
+		partTargetDur: hls.partTargetDur,
+	})
+	hls.mu.Unlock()
+	return out
+}
+
+// currentSegmentName is unused; kept for backward compatibility.
+func currentSegmentName(_ *HLS) string { return "" }
 
 // WaitFirstSegment blocks until the first segment is available (or
 // Start has returned). Callers use it to defer a 404 on the first
@@ -142,13 +264,15 @@ func (hls *HLS) Stop() {
 	if !atomic.CompareAndSwapInt32(&hls.stopped, 0, 1) {
 		return
 	}
-	hls.mu.Lock()
 	if hls.currentFile != nil {
 		_ = hls.currentFile.Close()
 		hls.currentFile = nil
 	}
+	hls.mu.Lock()
+	hls.currentSegName = ""
 	segs := append([]segmentInfo(nil), hls.segments...)
 	hls.segments = nil
+	hls.cond.Broadcast()
 	hls.mu.Unlock()
 	for _, s := range segs {
 		_ = os.Remove(filepath.Join(hls.dir, s.filename))
@@ -277,6 +401,20 @@ outer:
 		if pes.DTS > hls.currentEndDTS {
 			hls.currentEndDTS = pes.DTS
 		}
+
+		//LL-HLS partial-segment boundary check. Close the current part
+		//once it has accumulated at least PART-TARGET seconds of media
+		//or whenever a fresh keyframe arrived (so subsequent parts
+		//align with sub-GOP boundaries when the encoder emits short
+		//GOPs). Performed AFTER muxing so the just-written PES belongs
+		//to the part we're closing — the next part starts at the
+		//current write offset.
+		if hls.llEnabled && hls.currentFile != nil {
+			partDur := float64(pes.DTS-hls.partStartDTS) / 90000.0
+			if partDur*float64(time.Second) >= float64(hls.partTargetDur) {
+				hls.closeCurrentPart(pes.DTS, false)
+			}
+		}
 	}
 }
 
@@ -374,20 +512,82 @@ func (hls *HLS) toPES(tag libflv.Tag) (pes *libmpeg.PES, pid uint16, videoKey bo
 
 // openSegment creates a fresh .ts file and writes an initial PAT/PMT.
 func (hls *HLS) openSegment(startDTS uint64) error {
+	hls.mu.Lock()
 	name := fmt.Sprintf("%s-%d.ts", hls.streamID, hls.nextSeq)
+	hls.mu.Unlock()
 	fullPath := filepath.Join(hls.dir, name)
 	f, err := os.Create(fullPath)
 	if err != nil {
 		return fmt.Errorf("create segment: %w", err)
 	}
 	hls.currentFile = f
-	hls.currentWriter = easyio.NewEasyWriter(f)
+	hls.currentBytes = 0
+	hls.currentWriter = newCountingWriter(f, &hls.currentBytes)
 	hls.currentStartDTS = startDTS
 	hls.currentEndDTS = startDTS
+	hls.partStartDTS = startDTS
+	hls.partStartOffset = 0
+
+	hls.mu.Lock()
+	hls.currentSegName = name
+	hls.currentParts = hls.currentParts[:0]
+	hls.mu.Unlock()
+
 	//Fresh CC per segment so each segment stands alone — a mid-stream
 	//joiner decoding just this segment won't see CC discontinuities.
 	hls.Cc = map[uint16]uint8{}
 	return hls.writePSI()
+}
+
+// closeCurrentPart records the bytes written since the last part
+// boundary as a partInfo on the in-progress segment, broadcasts the
+// cond so blocking-reload clients can wake up, and starts a new part
+// from the current write offset. independent indicates whether the
+// new (next) part will start with a keyframe.
+func (hls *HLS) closeCurrentPart(endDTS uint64, nextIndependent bool) {
+	if hls.currentFile == nil {
+		return
+	}
+	dur := float64(endDTS-hls.partStartDTS) / 90000.0
+	if dur <= 0 {
+		return
+	}
+	length := hls.currentBytes - hls.partStartOffset
+	if length <= 0 {
+		return
+	}
+	independent := len(hls.currentParts) == 0 //first part — starts at IDR+PSI
+	hls.mu.Lock()
+	hls.currentParts = append(hls.currentParts, partInfo{
+		duration:    dur,
+		independent: independent,
+		byteOffset:  hls.partStartOffset,
+		byteLength:  length,
+	})
+	hls.cond.Broadcast()
+	hls.mu.Unlock()
+
+	hls.partStartDTS = endDTS
+	hls.partStartOffset = hls.currentBytes
+	_ = nextIndependent //tracked via the "first part of new segment" rule
+}
+
+// countingWriter wraps an io.Writer and increments *n by the number of
+// bytes it actually transfers. We use it to track the current segment's
+// byte offset for LL-HLS partial BYTERANGE attributes.
+type countingWriter struct {
+	w io.Writer
+	n *int64
+}
+
+func newCountingWriter(w io.Writer, n *int64) easyio.EasyWriter {
+	return easyio.NewEasyWriter(&countingWriter{w: w, n: n})
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	written, err := cw.w.Write(p)
+	*cw.n += int64(written)
+	return written, err
 }
 
 // writePSI emits one PAT and one PMT to the current segment and stamps
@@ -418,6 +618,13 @@ func (hls *HLS) finaliseCurrent() {
 	if hls.currentFile == nil {
 		return
 	}
+	//Flush any tail bytes since the last part boundary into one final
+	//part, so LL-HLS clients have a complete partial-segment record
+	//for this MSN.
+	if hls.llEnabled && hls.currentBytes > hls.partStartOffset {
+		hls.closeCurrentPart(hls.currentEndDTS, false)
+	}
+
 	name := filepath.Base(hls.currentFile.Name())
 	_ = hls.currentFile.Close()
 	hls.currentFile = nil
@@ -430,15 +637,17 @@ func (hls *HLS) finaliseCurrent() {
 		duration = float64(hls.targetDur) / float64(time.Second)
 	}
 
+	hls.mu.Lock()
 	seg := segmentInfo{
 		filename: name,
 		seq:      hls.nextSeq,
 		duration: duration,
 		startDTS: hls.currentStartDTS,
+		parts:    append([]partInfo(nil), hls.currentParts...),
 	}
+	hls.currentParts = hls.currentParts[:0]
+	hls.currentSegName = ""
 	hls.nextSeq++
-
-	hls.mu.Lock()
 	hls.segments = append(hls.segments, seg)
 	//Reap old segments outside the sliding window.
 	for len(hls.segments) > hls.windowSize {
@@ -446,6 +655,7 @@ func (hls *HLS) finaliseCurrent() {
 		hls.segments = hls.segments[1:]
 		_ = os.Remove(filepath.Join(hls.dir, old.filename))
 	}
+	hls.cond.Broadcast()
 	hls.mu.Unlock()
 
 	hls.readyOnce.Do(func() { close(hls.ready) })
