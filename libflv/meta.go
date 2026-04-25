@@ -48,40 +48,64 @@ func ParseMetaTag(tb TagBase, amf libamf.AMF, b []byte) (meta *MetaTag, err erro
 		return nil, err
 	}
 
-	//for index, a := range array {
-	//	fmt.Println("index:", index, " a.type:", reflect.TypeOf(a), " a.Value:", reflect.ValueOf(a))
-	//}
-
-	meta = &MetaTag{
-		TagBase:     tb,
-		FirstField:  array[0].(string),
-		SecondField: array[1].(string),
+	meta = &MetaTag{TagBase: tb}
+	//Publishers emit data messages in two shapes:
+	//  - [string "onMetaData", ecma-array]
+	//  - [string "@setDataFrame", string "onMetaData", ecma-array]
+	//Canonicalise to always keep the onMetaData string in SecondField
+	//and the properties array in the last slot.
+	var props interface{}
+	switch {
+	case len(array) >= 3:
+		if s, ok := array[0].(string); ok {
+			meta.FirstField = s
+		}
+		if s, ok := array[1].(string); ok {
+			meta.SecondField = s
+		}
+		props = array[2]
+	case len(array) == 2:
+		if s, ok := array[0].(string); ok {
+			meta.SecondField = s
+		}
+		props = array[1]
+	default:
+		return meta, errors.New("invalid onMetaData payload")
 	}
 
-	err = mapstructure.Decode(array[2], meta)
-	if err != nil {
-		fmt.Printf("decode data error, err:%+v\n", err)
-		err = errors.Wrap(err, "mapstructure.Decode data")
+	if props != nil {
+		if err = mapstructure.Decode(props, meta); err != nil {
+			fmt.Printf("decode data error, err:%+v\n", err)
+			err = errors.Wrap(err, "mapstructure.Decode data")
+		}
 	}
-
 	return meta, err
 }
 
+// Marshal serialises the metadata tag body in the form FLV players
+// expect: two AMF0 elements — the string "onMetaData" followed by the
+// ECMA array of properties. (RTMP's @setDataFrame wrapper is a command
+// verb, not part of the FLV script-data tag format, so we drop
+// FirstField even when Parse observed one.)
 func (mt *MetaTag) Marshal() (b []byte) {
 	buf := bytes.NewBuffer([]byte{})
 	writer := easyio.NewEasyWriter(buf)
 	amf := libamf.AMF0
 
-	var err1, err2, err3 error
-	//err1 = amf.Encode(writer, mt.FirstField)
-	err2 = amf.Encode(writer, mt.SecondField)
-	err3 = amf.Encode(writer, structs.Map(mt))
-	err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3)
-	if err != nil {
+	name := mt.SecondField
+	if name == "" {
+		name = "onMetaData"
+	}
+
+	var err1, err2 error
+	err1 = amf.Encode(writer, name)
+	err2 = amf.Encode(writer, structs.Map(mt))
+	if err := easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2); err != nil {
 		fmt.Println("HandleMultiError error:", err)
 		return nil
 	}
 
+	var err error
 	b, err = io.ReadAll(buf)
 	if err != nil {
 		return nil
@@ -90,6 +114,5 @@ func (mt *MetaTag) Marshal() (b []byte) {
 }
 
 func (mt *MetaTag) Data() (b []byte) {
-	//XXX
-	return
+	return mt.Marshal()
 }

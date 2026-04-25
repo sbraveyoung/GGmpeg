@@ -21,6 +21,23 @@ const (
 	S2_LEN = 1536
 )
 
+// Adobe digest/key block geometry (C1/S1).
+//
+// Each of the two 764-byte blocks (digest + key) contains either
+//   - 4-byte offset marker   + 32-byte digest   + 728 bytes of random
+//     ("digest spread" = 728 = 764 - 4 - 32), or
+//   - 128-byte key           + 632 bytes of random + 4-byte offset marker
+//     ("key spread" = 632 = 764 - 128 - 4).
+//
+// The offset marker is interpreted as the sum of its 4 bytes modulo the
+// spread, which places the digest (or key) somewhere in the remaining
+// bytes.
+const (
+	handshakeBlockSize   = 764
+	handshakeDigestSpread = 728 //764 - 4(marker) - 32(digest)
+	handshakeDigestSize  = 32
+)
+
 type HandshakeMode int
 
 const (
@@ -88,7 +105,6 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "read c0 from conn")
 	}
-	fmt.Printf("c0:%x\n", c0)
 	p.parseC0(c0)
 	if p.clientVersion != p.serverVersion {
 		return errors.New("invalid client version")
@@ -98,10 +114,8 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "read c1 from conn")
 	}
-	fmt.Printf("c1:len:%d, data: %x\n", len(c1), c1)
 
 	s0 := p.makeS0()
-	fmt.Printf("s0:%x\n", s0)
 
 	p.parseC1(c1)
 
@@ -111,7 +125,6 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	}
 
 	s1 := p.makeS1()
-	fmt.Printf("s1:len:%d, data: %x\n", len(s1), s1)
 	err = rtmp.writerConn.WriteFull(s1)
 	if err != nil {
 		return errors.Wrap(err, "write s1 to conn")
@@ -122,14 +135,18 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	if err != nil {
 		return errors.Wrap(err, "write s2 to conn")
 	}
-	fmt.Printf("s2:%x\n", s2)
 
 	err = rtmp.readerConn.ReadFull(c2)
 	if err != nil {
 		return errors.Wrap(err, "read c2 from conn")
 	}
-	fmt.Printf("c2:%x\n", c2)
-	p.parseC2(c2)
+	if err := p.parseC2(c2); err != nil {
+		//Log but don't fail: many players send a half-formed C2 (zeroed
+		//echo fields) yet proceed with the session. Rejecting them
+		//would be strictly spec-correct but breaks too much in the
+		//wild — matches FFmpeg's leniency.
+		fmt.Println("parseC2 warning:", err)
+	}
 
 	return nil
 }
@@ -144,54 +161,36 @@ func (p *Peer) parseC0(c0 []byte) {
 }
 
 func (p *Peer) parseC1(c1 []byte) {
-	//try complex handshake first
+	//Try complex handshake first. The digest block lives either at
+	//offset 8 (scheme 2 / COMPLEX2) or 8+764 (scheme 1 / COMPLEX1). We
+	//probe scheme 1 first, then fall back to scheme 2, then finally to
+	//the simple (no-digest) form.
 
-	//key-digest
-	// keyBufOffset := 8
-	digestBufOffset := 8 + 764
+	digestBufOffset := 8 + handshakeBlockSize
 	p.handshakeMode = COMPLEX1
 
 	try := 0
 complex:
-	// fmt.Println("keyBufOffset:", keyBufOffset)
-	// fmt.Println("digestBufOffset:", digestBufOffset)
+	digestOffset := (int(c1[digestBufOffset]) + int(c1[digestBufOffset+1]) + int(c1[digestBufOffset+2]) + int(c1[digestBufOffset+3])) % handshakeDigestSpread
 
-	// keyOffset := (int(c1[keyBufOffset+760]) + int(c1[keyBufOffset+761]) + int(c1[keyBufOffset+762]) + int(c1[keyBufOffset+763]))
-	//XXX: what's mean about 728?
-	digestOffset := (int(c1[digestBufOffset]) + int(c1[digestBufOffset+1]) + int(c1[digestBufOffset+2]) + int(c1[digestBufOffset+3])) % 728
-
-	// fmt.Println("keyOffset:", keyOffset)
-	// fmt.Println("digestOffset:", digestOffset)
-
-	// p.clientKey = c1[keyBufOffset+keyOffset : keyBufOffset+keyOffset+128]
-	p.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+32]
+	p.clientDigest = c1[digestBufOffset+4+digestOffset : digestBufOffset+4+digestOffset+handshakeDigestSize]
 
 	joined := append([]byte{}, c1[:digestBufOffset+4+digestOffset]...)
-	joined = append(joined, c1[digestBufOffset+4+digestOffset+32:]...)
-
-	// fmt.Printf("joined:%x\n", joined)
-	// fmt.Printf("client key:%x\n", FPkey[:30])
+	joined = append(joined, c1[digestBufOffset+4+digestOffset+handshakeDigestSize:]...)
 
 	mac := hmac.New(sha256.New, FPkey[:30])
 	mac.Write(joined)
 	newDigest := mac.Sum(nil)
 
-	// fmt.Printf("newDigest, len:%d, data:%x\n", len(newDigest), newDigest)
-	// fmt.Printf("clientDigest, len:%d, data:%x\n", len(p.clientDigest), p.clientDigest)
-
-	if bytes.Compare(newDigest, p.clientDigest) == 0 {
-		fmt.Println("complex handshake success.")
+	if bytes.Equal(newDigest, p.clientDigest) {
 		return
 	} else {
 		if try == 0 {
-			fmt.Println("complex handshake mode 1 fail, try mode 2")
 			digestBufOffset = 8
-			// keyBufOffset = 8 + 764
 			p.handshakeMode = COMPLEX2
 			try++
 			goto complex
 		} else {
-			fmt.Println("complex handshake fail, using simple handshake")
 			goto simple
 		}
 	}
@@ -202,8 +201,41 @@ simple:
 	p.clientZero = binary.BigEndian.Uint32(c1[4:8])
 	p.clientRandom = c1[8:]
 }
-func (p *Peer) parseC2(c2 []byte) {
-	//TODO
+
+// parseC2 validates that the peer echoed back our server random. For
+// the simple handshake C2 is a direct copy of S1's random block; for
+// the complex handshake it's an HMAC-SHA256 tag over S2[:1504] keyed
+// by HMAC(FPkey, serverDigest). Players are notoriously lax about C2,
+// so we warn on mismatch rather than abort.
+func (p *Peer) parseC2(c2 []byte) error {
+	if len(c2) != C2_LEN {
+		return fmt.Errorf("C2 length %d, want %d", len(c2), C2_LEN)
+	}
+	switch p.handshakeMode {
+	case SIMPLE:
+		//Spec §5.2.4: C2[8..] echoes S1's random. Some clients zero
+		//this; only validate when serverRandom is populated.
+		if len(p.serverRandom) >= len(c2[8:]) {
+			if !bytes.Equal(c2[8:], p.serverRandom[:len(c2[8:])]) {
+				return errors.New("simple C2 random mismatch")
+			}
+		}
+	case COMPLEX1, COMPLEX2:
+		if len(p.serverDigest) == 0 {
+			return nil
+		}
+		mac := hmac.New(sha256.New, FPkey)
+		mac.Write(p.serverDigest)
+		tmpDigest := mac.Sum(nil)
+
+		mac = hmac.New(sha256.New, tmpDigest)
+		mac.Write(c2[:C2_LEN-handshakeDigestSize])
+		expected := mac.Sum(nil)
+		if !bytes.Equal(expected, c2[C2_LEN-handshakeDigestSize:]) {
+			return errors.New("complex C2 digest mismatch")
+		}
+	}
+	return nil
 }
 
 func (p *Peer) makeS0() (s0 []byte) {
@@ -224,23 +256,21 @@ func (p *Peer) makeS1() (s1 []byte) {
 		copy(s1[4:8], []byte{0x0, 0x0, 0x0, 0x0})
 		p.serverRandom = s1[8:]
 	case COMPLEX1:
-		digestBufOffset = 8 + 764
+		digestBufOffset = 8 + handshakeBlockSize
 		fallthrough
 	case COMPLEX2:
 		copy(s1[4:8], []byte{0x04, 0x05, 0x00, 0x01})
 
-		digestOffset := (int(s1[digestBufOffset]) + int(s1[digestBufOffset+1]) + int(s1[digestBufOffset+2]) + int(s1[digestBufOffset+3])) % 728
-		fmt.Println("digestOffset:", digestOffset)
+		digestOffset := (int(s1[digestBufOffset]) + int(s1[digestBufOffset+1]) + int(s1[digestBufOffset+2]) + int(s1[digestBufOffset+3])) % handshakeDigestSpread
 
 		joined := append([]byte{}, s1[:digestBufOffset+4+digestOffset]...)
-		joined = append(joined, s1[digestBufOffset+4+digestOffset+32:]...)
-		// fmt.Printf("joined:%x\n", joined)
+		joined = append(joined, s1[digestBufOffset+4+digestOffset+handshakeDigestSize:]...)
 
 		mac := hmac.New(sha256.New, FMSKey[:36])
 		mac.Write(joined)
 		digest := mac.Sum(nil)
-		// fmt.Printf("digest:%x\n", digest)
-		copy(s1[digestBufOffset+4+digestOffset:digestBufOffset+4+digestOffset+32], digest)
+		copy(s1[digestBufOffset+4+digestOffset:digestBufOffset+4+digestOffset+handshakeDigestSize], digest)
+		p.serverDigest = append([]byte{}, digest...)
 	default:
 	}
 	return s1
@@ -263,9 +293,9 @@ func (p *Peer) makeS2() (s2 []byte) {
 		tmpDigest := mac.Sum(nil)
 
 		mac = hmac.New(sha256.New, tmpDigest)
-		mac.Write(s2[:S2_LEN-32])
+		mac.Write(s2[:S2_LEN-handshakeDigestSize])
 		s2Digest := mac.Sum(nil)
-		copy(s2[S2_LEN-32:S2_LEN], s2Digest)
+		copy(s2[S2_LEN-handshakeDigestSize:S2_LEN], s2Digest)
 	default:
 	}
 	return

@@ -38,35 +38,16 @@ func NewFLV(writer easyio.EasyWriter) *FLV {
 	}
 }
 
-//func ParseFLV(er easyio.EasyReader) (flv *FLV, err error) {
-//	b, err := er.ReadN(9)
-//	if err != nil {
-//		return
-//	}
+// FLVWrite serialises a single FLV tag (audio / video / script data).
+// Per FLV v10.1 §E.4.1, the tag header is:
 //
-//	if b[0] != 'F' || b[1] != 'L' || b[2] != 'V' ||
-//		b[3] != 0x01 ||
-//		b[4]&0xf8 != 0 || b[4]&0x02 != 0 ||
-//		binary.BigEndian.Uint32(b[5:9]) != 9 {
-//		err = errors.New("invalid data format")
-//		return
-//	}
+//	1 byte  TagType
+//	3 bytes DataSize       (low-order 24 bits of body length)
+//	3 bytes Timestamp      (low-order 24 bits)
+//	1 byte  TimestampExt   (high 8 bits — forms the full 32-bit stamp)
+//	3 bytes StreamID       (always 0)
 //
-//	flv = &FLV{
-//		FLVHeader: FLVHeader{
-//			Version: 1,
-//		},
-//	}
-//
-//	if b[4]&0x04 != 0 {
-//		flv.TypeFlagsAudio = true
-//	}
-//	if b[4]&0x01 != 0 {
-//		flv.TypeFlagsVideo = true
-//	}
-//	return flv, nil
-//}
-
+// followed by the body bytes and a 4-byte PreviousTagSize footer.
 func FLVWrite(tag Tag) (b []byte) {
 	switch tag.(type) {
 	case *AudioTag:
@@ -78,28 +59,28 @@ func FLVWrite(tag Tag) (b []byte) {
 	default:
 	}
 
-	//Tag
 	data := tag.Marshal()
 
-	//////////////////////////XXX maybe do better
-	//DataSize
-	sb := make([]byte, 4, 4)
-	binary.BigEndian.PutUint32(sb, uint32(len(data)))
-	b = append(b /*sb[0],*/, sb[1], sb[2], sb[3])
+	//DataSize: low 24 bits.
+	var sb [4]byte
+	binary.BigEndian.PutUint32(sb[:], uint32(len(data)))
+	b = append(b, sb[1], sb[2], sb[3])
 
-	//Timestamp and TimestampExtended
-	binary.BigEndian.PutUint32(sb, uint32(tag.GetTagInfo().TimeStamp))
-	b = append(b /*sb[0],*/, sb[1], sb[2], sb[3], 0x0)
-	//////////////////////////
+	//Timestamp: low 24 bits in the first 3 bytes, high 8 bits in the
+	//TimestampExtended byte. Hardcoding the extended byte to 0 (the
+	//prior behaviour) silently wraps timestamps past ~4.66 hours.
+	ts := tag.GetTagInfo().TimeStamp
+	binary.BigEndian.PutUint32(sb[:], ts)
+	b = append(b, sb[1], sb[2], sb[3], sb[0])
 
-	//StreamID
+	//StreamID: always zero per spec.
 	b = append(b, 0x0, 0x0, 0x0)
 
-	//tag data
+	//Tag body + PreviousTagSize footer.
 	b = append(b, data...)
-	writedSizeByte := make([]byte, 4, 4)
-	binary.BigEndian.PutUint32(writedSizeByte, uint32(len(b)))
-	b = append(b, writedSizeByte...)
+	prev := make([]byte, 4)
+	binary.BigEndian.PutUint32(prev, uint32(len(b)))
+	b = append(b, prev...)
 
 	return b
 }
