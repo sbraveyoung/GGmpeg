@@ -292,40 +292,11 @@ func (hls *HLS) Start(gopReader *broadcast.BroadcastReader) (err error) {
 		return fmt.Errorf("mkdir %s: %w", hls.dir, err)
 	}
 
-	hls.Pat = &libmpeg.PAT{
-		TableID:                0x00,
-		SectionSyntaxIndicator: 0x01,
-		SectionLength:          0x0d,
-		TransportStreamID:      0x01,
-		VersionNumber:          0x00,
-		CurrentNextIndicator:   0x01,
-		SectionNumber:          0x00,
-		LastSectionNumber:      0x00,
-		PMTs: map[uint16]*libmpeg.PMT{
-			libmpeg.PMT_PID: {
-				TableID:                0x02,
-				SectionSyntaxIndicator: 0x01,
-				SectionLength:          0x17,
-				ProgramNumber:          0x01,
-				VersionNumber:          0x00,
-				CurrentNextIndicator:   0x01,
-				SectionNumber:          0x00,
-				LastSectionNumber:      0x00,
-				PCR_PID:                libmpeg.VIDEO_PID,
-				ProgramInfoLength:      0x00,
-				Streams: map[uint16]*libmpeg.PES{
-					libmpeg.AUDIO_PID: {
-						StreamID:              0xc0,
-						PacketStartCodePrefix: 0x000001,
-					},
-					libmpeg.VIDEO_PID: {
-						StreamID:              0xe0,
-						PacketStartCodePrefix: 0x000001,
-					},
-				},
-			},
-		},
-	}
+	//Build the PAT/PMT lazily — we don't know the video codec
+	//(H.264 vs HEVC) until the first sequence header arrives. Default
+	//to H.264 stream_type=0x1B; toPES upgrades video.StreamType to
+	//0x24 the moment we see an HEVC tag.
+	hls.Pat = newPAT(0x1B)
 
 	defer func() {
 		//On graceful exit (publisher gone or Stop called) finalise the
@@ -475,6 +446,7 @@ func (hls *HLS) toPES(tag libflv.Tag) (pes *libmpeg.PES, pid uint16, videoKey bo
 			videoKey = pv.FrameType == libflv.KEY_FRAME
 			pid = libmpeg.VIDEO_PID
 			pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.VIDEO_PID]
+			pes.StreamType = 0x1B
 
 			pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
 			pes.PTS = pes.DTS
@@ -503,11 +475,103 @@ func (hls *HLS) toPES(tag libflv.Tag) (pes *libmpeg.PES, pid uint16, videoKey bo
 				pes.PTS = pes.DTS + uint64(pv.Cts*90)
 			}
 			return pes, pid, videoKey, false
+
+		case libflv.FLV_VIDEO_HEVC:
+			//Toggle the video stream_type to HEVC the first time we
+			//see it — emitted segments past this point will advertise
+			//stream_type=0x24 (HEVC) in their PMT.
+			pes = hls.Pat.PMTs[libmpeg.PMT_PID].Streams[libmpeg.VIDEO_PID]
+			pes.StreamType = 0x24
+
+			if pv.FrameType == libflv.KEY_FRAME && pv.AVCPacketType == libflv.AVC_SEQUENCE_HEADER {
+				//HEVCDecoderConfigurationRecord — publishers also send
+				//VPS/SPS/PPS in-band ahead of every IDR, so we don't
+				//need to memoise them for the muxer.
+				return nil, 0, false, true
+			}
+			videoKey = pv.FrameType == libflv.KEY_FRAME
+			pid = libmpeg.VIDEO_PID
+
+			pes.DTS = uint64(tag.GetTagInfo().TimeStamp * 90)
+			pes.PTS = pes.DTS
+			pes.PTS_DTSFlag = 0x02
+			pes.PESHeaderDataLength = 0x05
+			pes.Index = 0
+			pes.HeaderIndex = 0
+			pes.Data = avccToAnnexB(pv.Data())
+			if pv.Cts != 0 {
+				pes.PTS_DTSFlag = 0x03
+				pes.PTS = pes.DTS + uint64(pv.Cts*90)
+			}
+			return pes, pid, videoKey, false
+
 		default:
 			return nil, 0, false, true
 		}
 	}
 	return nil, 0, false, true
+}
+
+// newPAT builds the canonical PAT/PMT skeleton used by openSegment.
+// videoStreamType is the codec stream_type (0x1B for H.264, 0x24 for
+// HEVC); audio defaults to 0x0F (ADTS AAC).
+func newPAT(videoStreamType uint8) *libmpeg.PAT {
+	return &libmpeg.PAT{
+		TableID:                0x00,
+		SectionSyntaxIndicator: 0x01,
+		SectionLength:          0x0d,
+		TransportStreamID:      0x01,
+		VersionNumber:          0x00,
+		CurrentNextIndicator:   0x01,
+		SectionNumber:          0x00,
+		LastSectionNumber:      0x00,
+		PMTs: map[uint16]*libmpeg.PMT{
+			libmpeg.PMT_PID: {
+				TableID:                0x02,
+				SectionSyntaxIndicator: 0x01,
+				SectionLength:          0x17,
+				ProgramNumber:          0x01,
+				VersionNumber:          0x00,
+				CurrentNextIndicator:   0x01,
+				SectionNumber:          0x00,
+				LastSectionNumber:      0x00,
+				PCR_PID:                libmpeg.VIDEO_PID,
+				ProgramInfoLength:      0x00,
+				Streams: map[uint16]*libmpeg.PES{
+					libmpeg.AUDIO_PID: {
+						StreamID:              0xc0,
+						StreamType:            0x0F,
+						PacketStartCodePrefix: 0x000001,
+					},
+					libmpeg.VIDEO_PID: {
+						StreamID:              0xe0,
+						StreamType:            videoStreamType,
+						PacketStartCodePrefix: 0x000001,
+					},
+				},
+			},
+		},
+	}
+}
+
+// avccToAnnexB rewrites a 4-byte length-prefixed NAL stream into an
+// AnnexB stream (start code 0x00000001 between NALs). Codec-agnostic —
+// works for both H.264 and HEVC since both use the same AVCC framing
+// in FLV.
+func avccToAnnexB(buf []byte) []byte {
+	out := make([]byte, 0, len(buf)+16)
+	for off := 0; off+4 <= len(buf); {
+		size := int(buf[off])<<24 | int(buf[off+1])<<16 |
+			int(buf[off+2])<<8 | int(buf[off+3])
+		off += 4
+		if size <= 0 || off+size > len(buf) {
+			break
+		}
+		out = append(out, 0x00, 0x00, 0x00, 0x01)
+		out = append(out, buf[off:off+size]...)
+		off += size
+	}
+	return out
 }
 
 // openSegment creates a fresh .ts file and writes an initial PAT/PMT.

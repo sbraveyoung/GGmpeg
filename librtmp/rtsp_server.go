@@ -46,6 +46,18 @@ type rtspSession struct {
 	videoRTP  *librtsp.RTPPacker
 	audioRTP  *librtsp.RTPPacker
 
+	// UDP transport per RFC 2326 §10.12 alternative form. videoUDP /
+	// audioUDP are the server-side sockets we listen on; peerVideoRTP
+	// / peerAudioRTP are the addresses the SETUP client_port tells us
+	// to send to. Set only when the client picked RTP/AVP (UDP); the
+	// session falls back to interleaved otherwise.
+	videoUDP      *net.UDPConn //server's RTP socket (server_port=N)
+	audioUDP      *net.UDPConn
+	videoUDPRTCP  *net.UDPConn
+	audioUDPRTCP  *net.UDPConn
+	peerVideoRTP  *net.UDPAddr //where to send RTP for the video track
+	peerAudioRTP  *net.UDPAddr
+
 	// Publisher path (ANNOUNCE/RECORD): set after a successful
 	// ANNOUNCE; handleRecord enters the RTP receive loop.
 	ingest      *rtspIngest
@@ -176,21 +188,50 @@ func (s *rtspSession) handleDescribe(req *librtsp.Request, resp *librtsp.Respons
 	return resp
 }
 
-// handleSetup remembers which interleave channels the client requested
-// for each track. RTSP requires a Session id on PLAY so we manufacture
-// one on the first SETUP and reuse it.
+// handleSetup parses the client's Transport and prepares either an
+// interleaved-TCP channel pair or a UDP socket pair. The chosen mode
+// is recorded on the session so subsequent PLAY / RECORD send paths
+// know which transport to use.
 func (s *rtspSession) handleSetup(req *librtsp.Request, resp *librtsp.Response) *librtsp.Response {
 	transport := req.Headers.Get("transport")
-	if !strings.Contains(transport, "RTP/AVP/TCP") || !strings.Contains(transport, "interleaved") {
+	useUDP := strings.Contains(transport, "RTP/AVP") &&
+		!strings.Contains(transport, "RTP/AVP/TCP")
+	useTCP := strings.Contains(transport, "RTP/AVP/TCP") &&
+		strings.Contains(transport, "interleaved")
+	if !useUDP && !useTCP {
 		resp.StatusCode = 461
 		resp.Reason = "Unsupported Transport"
 		return resp
 	}
-	rtpCh, rtcpCh, ok := parseInterleavedChannels(transport)
-	if !ok {
-		resp.StatusCode = 400
-		resp.Reason = "Bad Request"
-		return resp
+
+	var rtpCh, rtcpCh int
+	var srvRTPPort, srvRTCPPort int
+	var udpSocks [2]*net.UDPConn
+	var clientRTPPort, clientRTCPPort int
+
+	if useTCP {
+		var ok bool
+		rtpCh, rtcpCh, ok = parseInterleavedChannels(transport)
+		if !ok {
+			resp.StatusCode = 400
+			resp.Reason = "Bad Request"
+			return resp
+		}
+	} else {
+		var ok bool
+		clientRTPPort, clientRTCPPort, ok = parseClientPorts(transport)
+		if !ok {
+			resp.StatusCode = 400
+			resp.Reason = "Bad Request"
+			return resp
+		}
+		var err error
+		udpSocks, srvRTPPort, srvRTCPPort, err = openUDPPair()
+		if err != nil {
+			resp.StatusCode = 500
+			resp.Reason = "Internal Server Error"
+			return resp
+		}
 	}
 
 	//Two SETUP shapes:
@@ -198,23 +239,26 @@ func (s *rtspSession) handleSetup(req *librtsp.Request, resp *librtsp.Response) 
 	//    /trackID=0 (video) and /trackID=1 (audio) suffixes.
 	//  - ingest:   client did ANNOUNCE first and the SDP carried
 	//    arbitrary control= URLs; rtspIngest knows how to match.
+	isAudio := false
 	if s.ingest != nil {
-		isAudio, ok := s.notifyIngestSetup(req.URL, rtpCh)
+		var ok bool
+		isAudio, ok = s.notifyIngestSetup(req.URL, rtpCh)
 		if !ok {
 			resp.StatusCode = 404
 			resp.Reason = "Not Found"
 			return resp
 		}
-		_ = isAudio
 	} else {
 		track := strings.ToLower(strings.TrimRight(req.URL, "/"))
 		switch {
 		case strings.HasSuffix(track, "/trackid=0"):
 			s.videoChan = rtpCh
 			s.videoRTP = librtsp.NewRTPPacker(96, s.videoSSRC)
+			isAudio = false
 		case strings.HasSuffix(track, "/trackid=1"):
 			s.audioChan = rtpCh
 			s.audioRTP = librtsp.NewRTPPacker(97, s.audioSSRC)
+			isAudio = true
 		default:
 			resp.StatusCode = 404
 			resp.Reason = "Not Found"
@@ -222,13 +266,100 @@ func (s *rtspSession) handleSetup(req *librtsp.Request, resp *librtsp.Response) 
 		}
 	}
 
+	//Wire up UDP sockets to the per-track slot so PLAY / RECORD
+	//goroutines can find them later.
+	if useUDP {
+		clientHost := s.peerHostIP()
+		rtpPeer := &net.UDPAddr{IP: clientHost, Port: clientRTPPort}
+		if isAudio {
+			s.audioUDP = udpSocks[0]
+			s.audioUDPRTCP = udpSocks[1]
+			s.peerAudioRTP = rtpPeer
+		} else {
+			s.videoUDP = udpSocks[0]
+			s.videoUDPRTCP = udpSocks[1]
+			s.peerVideoRTP = rtpPeer
+		}
+	}
+
 	if s.sessionID == "" {
 		s.sessionID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	resp.Headers.Set("Transport",
-		fmt.Sprintf("RTP/AVP/TCP;unicast;interleaved=%d-%d", rtpCh, rtcpCh))
+	if useTCP {
+		resp.Headers.Set("Transport",
+			fmt.Sprintf("RTP/AVP/TCP;unicast;interleaved=%d-%d", rtpCh, rtcpCh))
+	} else {
+		resp.Headers.Set("Transport",
+			fmt.Sprintf("RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d",
+				clientRTPPort, clientRTCPPort, srvRTPPort, srvRTCPPort))
+	}
 	resp.Headers.Set("Session", s.sessionID+";timeout=60")
 	return resp
+}
+
+// peerHostIP returns the client's IP harvested from the RTSP TCP
+// connection. We use it as the destination for UDP packets — RTSP
+// can also carry a "destination=" param in Transport, but it's a
+// security risk (allows the client to direct floods elsewhere) and
+// FFmpeg/VLC don't bother setting it for unicast.
+func (s *rtspSession) peerHostIP() net.IP {
+	if tcp, ok := s.conn.RemoteAddr().(*net.TCPAddr); ok {
+		return tcp.IP
+	}
+	return net.IPv4(127, 0, 0, 1)
+}
+
+// parseClientPorts pulls "client_port=N-M" out of a Transport header.
+func parseClientPorts(transport string) (rtp, rtcp int, ok bool) {
+	for _, part := range strings.Split(transport, ";") {
+		part = strings.TrimSpace(part)
+		if !strings.HasPrefix(part, "client_port=") {
+			continue
+		}
+		v := strings.TrimPrefix(part, "client_port=")
+		dash := strings.Index(v, "-")
+		if dash < 0 {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return 0, 0, false
+			}
+			return n, n + 1, true
+		}
+		a, err1 := strconv.Atoi(v[:dash])
+		b, err2 := strconv.Atoi(v[dash+1:])
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		return a, b, true
+	}
+	return 0, 0, false
+}
+
+// openUDPPair binds two consecutive UDP ports — RTP on the even, RTCP
+// on the odd. Loops up to a few times in case some other process
+// snipes the odd-numbered port between our two binds.
+func openUDPPair() (socks [2]*net.UDPConn, rtpPort, rtcpPort int, err error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		var c1 *net.UDPConn
+		c1, err = net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+		if err != nil {
+			return
+		}
+		port := c1.LocalAddr().(*net.UDPAddr).Port
+		if port%2 != 0 {
+			//Got an odd port; close, retry — the kernel might give
+			//us an even one next time.
+			_ = c1.Close()
+			continue
+		}
+		c2, err2 := net.ListenUDP("udp", &net.UDPAddr{Port: port + 1})
+		if err2 != nil {
+			_ = c1.Close()
+			continue
+		}
+		return [2]*net.UDPConn{c1, c2}, port, port + 1, nil
+	}
+	return [2]*net.UDPConn{}, 0, 0, fmt.Errorf("failed to bind RTP/RTCP UDP pair")
 }
 
 // handlePlay starts the per-track packetisation goroutine that pulls
@@ -397,7 +528,21 @@ func (s *rtspSession) sendAudio(tag *libflv.AudioTag) error {
 	return nil
 }
 
+// writeInterleaved sends one RTP packet on the appropriate transport.
+// ch is the interleave channel (used in TCP mode); routing in UDP mode
+// is by even/odd channel number — the same convention SETUP responses
+// use. We resolve the right UDP socket + peer addr from the session.
 func (s *rtspSession) writeInterleaved(ch uint8, rtp []byte) error {
+	//UDP: pick the matching per-track socket. Channel 0 / 2 / … (the
+	//RTP halves) map to whichever track we set up first.
+	if int(ch) == s.videoChan && s.videoUDP != nil {
+		_, err := s.videoUDP.WriteToUDP(rtp, s.peerVideoRTP)
+		return err
+	}
+	if int(ch) == s.audioChan && s.audioUDP != nil {
+		_, err := s.audioUDP.WriteToUDP(rtp, s.peerAudioRTP)
+		return err
+	}
 	frame := librtsp.InterleaveFrame(ch, rtp)
 	s.wmu.Lock()
 	defer s.wmu.Unlock()

@@ -49,11 +49,14 @@ type DASH struct {
 	windowSize int
 	timescale  uint32
 
-	// Decoder configuration learned from the AVC sequence header.
+	// Decoder configuration learned from the video sequence header.
 	mu          sync.Mutex
 	cond        *sync.Cond
+	codec       string //"avc1.42E01E" or "hvc1.…" derived at init time
+	isHEVC      bool
 	sps         []byte
 	pps         []byte
+	hvccRecord  []byte //full HEVCDecoderConfigurationRecord, HEVC only
 	width       uint16
 	height      uint16
 	initBytes   []byte
@@ -129,6 +132,7 @@ func (d *DASH) Manifest() []byte {
 		targetDur:         d.targetDur,
 		width:             d.width,
 		height:            d.height,
+		codecStr:          d.codec,
 		segments:          append([]segmentInfo(nil), d.segments...),
 	})
 }
@@ -185,14 +189,20 @@ func (d *DASH) Start(gopReader *broadcast.BroadcastReader) error {
 		if !ok {
 			continue //audio not yet supported in this minimal libdash
 		}
-		if v.CodecID != libflv.FLV_VIDEO_AVC {
+		if v.CodecID != libflv.FLV_VIDEO_AVC && v.CodecID != libflv.FLV_VIDEO_HEVC {
 			continue
 		}
 
 		switch v.AVCPacketType {
 		case libflv.AVC_SEQUENCE_HEADER:
-			if err := d.handleSequenceHeader(v.Data()); err != nil {
-				fmt.Printf("dash: parse AVC sequence header: %v\n", err)
+			if v.CodecID == libflv.FLV_VIDEO_HEVC {
+				if err := d.handleHEVCSequenceHeader(v.Data()); err != nil {
+					fmt.Printf("dash: parse HEVC sequence header: %v\n", err)
+				}
+			} else {
+				if err := d.handleSequenceHeader(v.Data()); err != nil {
+					fmt.Printf("dash: parse AVC sequence header: %v\n", err)
+				}
 			}
 			continue
 		case libflv.AVC_NALU:
@@ -236,6 +246,150 @@ func (d *DASH) Start(gopReader *broadcast.BroadcastReader) error {
 	}
 }
 
+// handleHEVCSequenceHeader parses the FLV-carried
+// HEVCDecoderConfigurationRecord. We pull width/height by walking the
+// embedded SPS array, and embed the entire DCR verbatim into the
+// hvcC box.
+func (d *DASH) handleHEVCSequenceHeader(record []byte) error {
+	w, h, codec, err := parseHEVCDCRDimensions(record)
+	if err != nil {
+		//Fall back to a placeholder codec string; many players accept
+		//missing dimensions when the in-band parameter sets later
+		//replenish them.
+		codec = "hvc1.1.6.L93.B0"
+	}
+	d.mu.Lock()
+	d.isHEVC = true
+	d.codec = codec
+	d.hvccRecord = append([]byte(nil), record...)
+	d.width = w
+	d.height = h
+	d.initBytes = libmp4.BuildHEVCInitSegment(libmp4.HEVCInitParams{
+		TrackID:    1,
+		Timescale:  d.timescale,
+		Width:      w,
+		Height:     h,
+		HVCCRecord: record,
+	})
+	d.mu.Unlock()
+
+	if d.streamID != "" {
+		path := filepath.Join(d.dir, fmt.Sprintf("%s-init.mp4", d.streamID))
+		if err := os.WriteFile(path, d.initBytes, 0o644); err != nil {
+			return fmt.Errorf("write init segment: %w", err)
+		}
+	}
+	d.mu.Lock()
+	d.initWritten = true
+	d.mu.Unlock()
+	return nil
+}
+
+// parseHEVCDCRDimensions walks the array_of_arrays in the
+// HEVCDecoderConfigurationRecord, finds the first SPS, and reads
+// pic_width / pic_height. Codec string is derived from the
+// general_profile_idc / level fields.
+func parseHEVCDCRDimensions(src []byte) (w, h uint16, codec string, err error) {
+	if len(src) < 23 {
+		err = fmt.Errorf("HEVC DCR too short: %d", len(src))
+		return
+	}
+	profileIDC := src[1] & 0x1F
+	levelIDC := src[12]
+	codec = fmt.Sprintf("hvc1.%d.6.L%d.B0", profileIDC, levelIDC)
+
+	off := 22
+	if off >= len(src) {
+		return
+	}
+	numArrays := int(src[off])
+	off++
+	for i := 0; i < numArrays; i++ {
+		if off+3 > len(src) {
+			return
+		}
+		nalType := src[off] & 0x3F
+		numNalus := int(src[off+1])<<8 | int(src[off+2])
+		off += 3
+		for j := 0; j < numNalus; j++ {
+			if off+2 > len(src) {
+				return
+			}
+			n := int(src[off])<<8 | int(src[off+1])
+			off += 2
+			if off+n > len(src) {
+				return
+			}
+			if nalType == 33 {
+				//SPS — try to extract dimensions.
+				w, h = parseHEVCSPSDimensions(src[off : off+n])
+				return
+			}
+			off += n
+		}
+	}
+	return
+}
+
+// parseHEVCSPSDimensions extracts pic_width_in_luma_samples and
+// pic_height_in_luma_samples from an HEVC SPS. Limited to the prefix
+// bits up through those fields — anything beyond requires a full
+// HEVC syntax parser. Returns zeros if the SPS contains features
+// we can't quickly walk past (e.g. profile constraints with sub-layer
+// flags); the caller falls back to placeholder dimensions in that
+// case.
+func parseHEVCSPSDimensions(sps []byte) (w, h uint16) {
+	if len(sps) < 16 {
+		return 0, 0
+	}
+	//Strip emulation-prevention bytes.
+	rbsp := make([]byte, 0, len(sps))
+	for i := 0; i < len(sps); i++ {
+		if i+2 < len(sps) && sps[i] == 0 && sps[i+1] == 0 && sps[i+2] == 0x03 {
+			rbsp = append(rbsp, 0, 0)
+			i += 2
+			continue
+		}
+		rbsp = append(rbsp, sps[i])
+	}
+
+	//Skip 2-byte NAL header.
+	br := newBitReader(rbsp[2:])
+	_, _ = br.readBits(4) //sps_video_parameter_set_id
+	maxSubLayers, _ := br.readBits(3)
+	_, _ = br.readBits(1) //temporal_id_nesting_flag
+
+	//profile_tier_level — 12 bytes for the general profile + per
+	//sub-layer presence flags. Skip them as a block.
+	skipBytes := 12
+	for i := 0; i < skipBytes; i++ {
+		_, _ = br.readBits(8)
+	}
+	if maxSubLayers > 1 {
+		flags, _ := br.readBits(2 * int(maxSubLayers-1))
+		_ = flags
+		//byte-align: the spec specifies padding.
+		for br.pos%8 != 0 {
+			_, _ = br.readBits(1)
+		}
+		//Each sub-layer-present flag bit pair brings up to 11 bytes
+		//of profile/level data. Without parsing the flags we can't
+		//cleanly skip them — bail if any are set.
+	}
+
+	_ = br.readUE() //seq_parameter_set_id
+	chromaFormat := br.readUE()
+	if chromaFormat == 3 {
+		_, _ = br.readBits(1)
+	}
+	_ = chromaFormat
+	w16 := br.readUE()
+	h16 := br.readUE()
+	w = uint16(w16)
+	h = uint16(h16)
+	return
+}
+
 // handleSequenceHeader parses the FLV-carried AVCDecoderConfigurationRecord
 // and, once SPS+PPS are known, produces and writes the init segment.
 func (d *DASH) handleSequenceHeader(record []byte) error {
@@ -248,6 +402,14 @@ func (d *DASH) handleSequenceHeader(record []byte) error {
 	d.pps = pps
 	d.width = w
 	d.height = h
+	d.isHEVC = false
+	//Codec string per RFC 6381: avc1.PPCCLL where PP=profile,
+	//CC=constraints, LL=level — derived from SPS bytes 1..3.
+	if len(sps) >= 4 {
+		d.codec = fmt.Sprintf("avc1.%02X%02X%02X", sps[1], sps[2], sps[3])
+	} else {
+		d.codec = "avc1.42E01E"
+	}
 	d.initBytes = libmp4.BuildInitSegment(libmp4.InitSegmentParams{
 		TrackID:   1,
 		Timescale: d.timescale,

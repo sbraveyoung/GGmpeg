@@ -18,7 +18,8 @@ const (
 //iso13818-1.pdf: 2.4.3.7
 type PES struct {
 	PacketStartCodePrefix uint32 //24bit
-	StreamID              uint8  //8bit
+	StreamID              uint8  //8bit — PES header stream_id (0xC0 audio, 0xE0 video)
+	StreamType            uint8  //PMT stream_type (0x1B H.264, 0x24 HEVC, 0x0F AAC). Defaults to 0 for back-compat — caller should set it explicitly.
 	PESPacketLength       uint16 //16bit
 	// Reversed1              uint8  //2bit,0x02
 	PESScramblingControl   uint8 //2bit

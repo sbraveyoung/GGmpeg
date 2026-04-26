@@ -16,6 +16,7 @@ type manifestInputs struct {
 	targetDur         time.Duration
 	width             uint16
 	height            uint16
+	codecStr          string //RFC 6381 codec string; empty → avc1 fallback
 	segments          []segmentInfo
 }
 
@@ -74,8 +75,11 @@ func buildMPD(in manifestInputs) []byte {
 	sb.WriteString(`    <AdaptationSet contentType="video" segmentAlignment="true" ` +
 		`mimeType="video/mp4" startWithSAP="1">` + "\n")
 
-	codecStr := "avc1.42E01E" //baseline @ level 3.0; conservative fallback
-	bandwidth := 1000000      //placeholder bps
+	codecStr := in.codecStr
+	if codecStr == "" {
+		codecStr = "avc1.42E01E" //baseline @ level 3.0; conservative fallback
+	}
+	bandwidth := 1000000 //placeholder bps
 
 	fmt.Fprintf(&sb, `      <Representation id="v0" codecs="%s" `+
 		`bandwidth="%d" width="%d" height="%d" frameRate="30">`+"\n",

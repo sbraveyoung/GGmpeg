@@ -3,6 +3,7 @@ package librtmp
 import (
 	"encoding/binary"
 	"fmt"
+	"net"
 	"strings"
 	"sync/atomic"
 
@@ -137,16 +138,37 @@ func (s *rtspSession) handleRecord(req *librtsp.Request, resp *librtsp.Response)
 	return nil
 }
 
-// runIngestLoop reads interleaved $-frames off the TCP connection.
-// Each frame is "$<channel:1><len:2><RTP packet>"; we dispatch by
-// channel to the H.264 reassembler or the AAC depacketiser.
+// runIngestLoop reads RTP packets off whichever transport(s) the
+// client negotiated in SETUP — TCP-interleaved $-frames, UDP, or both.
+// UDP tracks each get their own read goroutine; the TCP control loop
+// concurrently handles GET_PARAMETER / TEARDOWN / etc.
 func (s *rtspSession) runIngestLoop() {
 	defer atomic.StoreInt32(&s.recording, 0)
 	defer func() {
 		if s.publishRTMP != nil {
 			s.publishRTMP.cleanup()
 		}
+		if s.videoUDP != nil {
+			_ = s.videoUDP.Close()
+		}
+		if s.audioUDP != nil {
+			_ = s.audioUDP.Close()
+		}
+		if s.videoUDPRTCP != nil {
+			_ = s.videoUDPRTCP.Close()
+		}
+		if s.audioUDPRTCP != nil {
+			_ = s.audioUDPRTCP.Close()
+		}
 	}()
+
+	//Spawn a UDP reader per track that was set up in UDP mode.
+	if s.videoUDP != nil {
+		go s.runUDPReader(s.videoUDP, false)
+	}
+	if s.audioUDP != nil {
+		go s.runUDPReader(s.audioUDP, true)
+	}
 
 	//Some clients (FFmpeg notably) send periodic GET_PARAMETER pings
 	//interleaved with media. Detect "$" framing vs the start of an
@@ -185,6 +207,27 @@ func (s *rtspSession) runIngestLoop() {
 			return
 		}
 		s.handleInterleaved(ch, body)
+	}
+}
+
+// runUDPReader pumps RTP packets off a per-track UDP socket. isAudio
+// distinguishes the two depacketisation paths.
+func (s *rtspSession) runUDPReader(c *net.UDPConn, isAudio bool) {
+	buf := make([]byte, 1500)
+	for atomic.LoadInt32(&s.recording) == 1 {
+		n, _, err := c.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		pkt, perr := librtsp.ParseRTP(append([]byte(nil), buf[:n]...))
+		if perr != nil {
+			continue
+		}
+		if isAudio {
+			s.handleAudioRTP(pkt)
+		} else {
+			s.handleVideoRTP(pkt)
+		}
 	}
 }
 

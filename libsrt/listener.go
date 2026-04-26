@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// AES-CTR encryption support is intentionally a no-op in this minimal
+// implementation. We accept KMREQ control messages but reply with
+// "encryption not supported" so the publisher falls back to a clean
+// (unencrypted) stream — matches what FFmpeg does without -srt_passphrase.
+
 // DataHandler is invoked once per data packet with the unwrapped
 // payload bytes (typically 188-byte aligned MPEG-TS packets when the
 // publisher is FFmpeg / OBS / GStreamer in their default Live mode).
@@ -38,6 +43,15 @@ type session struct {
 	lastSeen      time.Time
 	streamID      string
 	expectedSeq   uint32
+
+	// ACK / NAK bookkeeping. lastACKedSeq is the sequence number we
+	// last reported via an ACK; ackNum is the monotonically-incrementing
+	// ACK serial for SRT's ACKACK round-trip estimation.
+	mu             sync.Mutex
+	lastACKedSeq   uint32
+	ackNum         uint32
+	lastACK        time.Time
+	receivedSeqs   uint64 //packets observed since session start (for receiving rate)
 }
 
 // Listen opens a UDP socket on addr and dispatches data packets via
@@ -122,10 +136,70 @@ func (l *Listener) handlePacket(peer *net.UDPAddr, raw []byte) {
 			return
 		}
 		sess.lastSeen = time.Now()
-		if l.onData != nil {
-			_ = l.onData(sess.streamID, body)
-		}
+		l.handleDataPacket(sess, hdr, body)
 	}
+}
+
+// handleDataPacket runs the ARQ receiver state machine for one data
+// packet. We deliver in-order packets immediately; out-of-order arrivals
+// trigger a NAK for the gap (so the sender retransmits) and then we
+// fast-forward — we don't keep a reorder buffer, since live MPEG-TS
+// over SRT tolerates the occasional skip better than an unbounded
+// jitter buffer.
+func (l *Listener) handleDataPacket(sess *session, hdr *Header, body []byte) {
+	sess.mu.Lock()
+	if sess.expectedSeq == 0 && sess.ackNum == 0 {
+		//First data packet — adopt its sequence as the baseline.
+		sess.expectedSeq = hdr.SeqNumber
+	}
+	diff := SeqDiff(hdr.SeqNumber, sess.expectedSeq)
+	sess.receivedSeqs++
+
+	switch {
+	case diff < 0:
+		//Late retransmit — already delivered, drop quietly.
+		sess.mu.Unlock()
+		return
+	case diff > 0:
+		//Loss detected: gap is [expectedSeq, hdr.SeqNumber-1]. Emit a
+		//NAK so the sender can retransmit; either it arrives before we
+		//hand off media (benign) or we've already moved past it.
+		from := sess.expectedSeq
+		to := hdr.SeqNumber - 1
+		sess.expectedSeq = hdr.SeqNumber + 1
+		sess.mu.Unlock()
+		l.sendNAK(sess, from, to)
+	default:
+		sess.expectedSeq++
+		sess.mu.Unlock()
+	}
+	if l.onData != nil {
+		_ = l.onData(sess.streamID, body)
+	}
+	l.maybeSendACK(sess)
+}
+
+// sendNAK emits a single-range NAK loss-list.
+func (l *Listener) sendNAK(sess *session, from, to uint32) {
+	body := MarshalNAK([]LossRange{{From: from, To: to}})
+	l.sendControl(sess.peerAddr, CtrlNAK, 0, 0, sess, body)
+}
+
+// maybeSendACK emits an ACK at most every 10 ms (SRT's recommended
+// "Light ACK" interval) so the sender's send window can slide.
+func (l *Listener) maybeSendACK(sess *session) {
+	const ackInterval = 10 * time.Millisecond
+	sess.mu.Lock()
+	if time.Since(sess.lastACK) < ackInterval {
+		sess.mu.Unlock()
+		return
+	}
+	sess.lastACK = time.Now()
+	sess.ackNum++
+	ackNum := sess.ackNum
+	body := (&ACKBody{LastAckedSeq: sess.expectedSeq}).Marshal()
+	sess.mu.Unlock()
+	l.sendControl(sess.peerAddr, CtrlACK, 0, ackNum, sess, body)
 }
 
 // handleHandshake walks the v5 induction → conclusion two-step. We
