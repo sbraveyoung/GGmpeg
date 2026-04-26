@@ -32,6 +32,15 @@ type RTMP struct {
 	ownWindowAckSize uint32
 	bytesReceived    uint32
 	lastAcked        uint32
+
+	// Outbound (client) bookkeeping. connectApp is the app name passed
+	// in the connect cmd object; tcURL is the canonical RTMP URL;
+	// resultCount is incremented each time a _result message is
+	// processed so expectResultUntil can pace the connect/createStream
+	// handshake.
+	connectApp   string
+	tcURL        string
+	resultCount  uint32 //atomic
 }
 
 type connRole uint8
@@ -99,6 +108,33 @@ func (rtmp *RTMP) cleanup() {
 	rtmp.room = nil
 }
 
+// HandlerClient connects outbound: handshakes as client, sends
+// connect → createStream → play, then loops on ParseMessage. Inbound
+// audio/video/data tags are absorbed into the configured Room (set up
+// before this is called) so downstream protocols (HTTP-FLV, HLS,
+// DASH, RTSP) re-stream them just like a local publish.
 func (rtmp *RTMP) HandlerClient() {
-	//TODO
+	defer rtmp.cleanup()
+
+	if err := HandshakeClient(rtmp); err != nil {
+		fmt.Println("client handshake error:", err)
+		return
+	}
+
+	if err := rtmp.runClientCommands(); err != nil {
+		fmt.Println("client command error:", err)
+		return
+	}
+
+	for {
+		err := ParseMessage(rtmp)
+		if err == io.EOF {
+			fmt.Println("client disconnect")
+			return
+		}
+		if err != nil {
+			fmt.Println("client ParseMessage error:", err)
+			return
+		}
+	}
 }

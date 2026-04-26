@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
@@ -409,7 +410,12 @@ func (cm *CommandMessage) Do() (err error) {
 		}).Send()
 
 	case _RESULT:
+		//Outbound-client path: bump the response counter so the
+		//connect/createStream sender can move on. No-op for the more
+		//common server-side case.
+		atomic.AddUint32(&cm.rtmp.resultCount, 1)
 	case _ERROR:
+		atomic.AddUint32(&cm.rtmp.resultCount, 1)
 	default:
 	}
 

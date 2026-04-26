@@ -32,6 +32,7 @@ type rtspSession struct {
 	app        string
 	streamID   string
 	playing    int32 //atomic — 0 idle, 1 playing
+	recording  int32 //atomic — 0 idle, 1 receiving from publisher
 	wmu        sync.Mutex //serialise writes to conn (PLAY goroutine + replies)
 
 	// Negotiated tracks. Each track records the lower interleave
@@ -44,6 +45,11 @@ type rtspSession struct {
 	audioSSRC uint32
 	videoRTP  *librtsp.RTPPacker
 	audioRTP  *librtsp.RTPPacker
+
+	// Publisher path (ANNOUNCE/RECORD): set after a successful
+	// ANNOUNCE; handleRecord enters the RTP receive loop.
+	ingest      *rtspIngest
+	publishRTMP *RTMP
 }
 
 func newRTSPSession(conn net.Conn, srv *server) *rtspSession {
@@ -101,13 +107,17 @@ func (s *rtspSession) dispatch(req *librtsp.Request) *librtsp.Response {
 
 	switch strings.ToUpper(req.Method) {
 	case "OPTIONS":
-		resp.Headers.Set("Public", "OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER")
+		resp.Headers.Set("Public", "OPTIONS, DESCRIBE, ANNOUNCE, SETUP, PLAY, RECORD, TEARDOWN, GET_PARAMETER")
 	case "DESCRIBE":
 		return s.handleDescribe(req, resp)
+	case "ANNOUNCE":
+		return s.handleAnnounce(req, resp)
 	case "SETUP":
 		return s.handleSetup(req, resp)
 	case "PLAY":
 		return s.handlePlay(req, resp)
+	case "RECORD":
+		return s.handleRecord(req, resp)
 	case "TEARDOWN":
 		atomic.StoreInt32(&s.playing, 0)
 		resp.Headers.Set("Connection", "close")
@@ -183,18 +193,33 @@ func (s *rtspSession) handleSetup(req *librtsp.Request, resp *librtsp.Response) 
 		return resp
 	}
 
-	track := strings.ToLower(strings.TrimRight(req.URL, "/"))
-	switch {
-	case strings.HasSuffix(track, "/trackid=0"):
-		s.videoChan = rtpCh
-		s.videoRTP = librtsp.NewRTPPacker(96, s.videoSSRC)
-	case strings.HasSuffix(track, "/trackid=1"):
-		s.audioChan = rtpCh
-		s.audioRTP = librtsp.NewRTPPacker(97, s.audioSSRC)
-	default:
-		resp.StatusCode = 404
-		resp.Reason = "Not Found"
-		return resp
+	//Two SETUP shapes:
+	//  - playback: client called DESCRIBE first; we use our own
+	//    /trackID=0 (video) and /trackID=1 (audio) suffixes.
+	//  - ingest:   client did ANNOUNCE first and the SDP carried
+	//    arbitrary control= URLs; rtspIngest knows how to match.
+	if s.ingest != nil {
+		isAudio, ok := s.notifyIngestSetup(req.URL, rtpCh)
+		if !ok {
+			resp.StatusCode = 404
+			resp.Reason = "Not Found"
+			return resp
+		}
+		_ = isAudio
+	} else {
+		track := strings.ToLower(strings.TrimRight(req.URL, "/"))
+		switch {
+		case strings.HasSuffix(track, "/trackid=0"):
+			s.videoChan = rtpCh
+			s.videoRTP = librtsp.NewRTPPacker(96, s.videoSSRC)
+		case strings.HasSuffix(track, "/trackid=1"):
+			s.audioChan = rtpCh
+			s.audioRTP = librtsp.NewRTPPacker(97, s.audioSSRC)
+		default:
+			resp.StatusCode = 404
+			resp.Reason = "Not Found"
+			return resp
+		}
 	}
 
 	if s.sessionID == "" {
@@ -302,26 +327,30 @@ func (s *rtspSession) sendVideoSeqHeader(tag *libflv.VideoTag) {
 }
 
 func (s *rtspSession) sendVideo(tag *libflv.VideoTag) error {
-	if tag.CodecID != libflv.FLV_VIDEO_AVC {
-		return nil
-	}
 	if tag.AVCPacketType != libflv.AVC_NALU {
 		return nil
 	}
-	//FLV carries H.264 in AVCC: 4-byte length prefixes. Split into
-	//individual NALs and packetise each.
 	nals := librtsp.SplitAVCC(tag.Data())
 	if len(nals) == 0 {
 		return nil
 	}
-	//PTS in 90 kHz clock; FLV gives us the DTS in ms, plus a
-	//composition-time offset (also in ms) for B-frames.
+	//PTS in 90 kHz clock; FLV gives us DTS in ms plus a CTS offset.
 	pts := (uint32(tag.GetTagInfo().TimeStamp) + uint32(tag.Cts)) * 90
 
-	//Emit each NAL; the M-bit goes only on the very last packet of
-	//the access unit (per RFC 6184 §5.1).
+	//Codec-specific packetiser. For unsupported codecs we silently
+	//drop the frame — better than tearing down the RTSP session.
+	var pack func([]byte, int) [][]byte
+	switch tag.CodecID {
+	case libflv.FLV_VIDEO_AVC:
+		pack = librtsp.PackNAL
+	case libflv.FLV_VIDEO_HEVC:
+		pack = librtsp.PackHEVCNAL
+	default:
+		return nil
+	}
+
 	for ni, nal := range nals {
-		pieces := librtsp.PackNAL(nal, librtsp.DefaultMTU)
+		pieces := pack(nal, librtsp.DefaultMTU)
 		for pi, piece := range pieces {
 			marker := ni == len(nals)-1 && pi == len(pieces)-1
 			pkt := s.videoRTP.Pack(marker, pts, piece)
@@ -334,16 +363,13 @@ func (s *rtspSession) sendVideo(tag *libflv.VideoTag) error {
 }
 
 func (s *rtspSession) sendAudio(tag *libflv.AudioTag) error {
-	if tag.SoundFormat != libflv.FLV_AUDIO_AAC {
-		return nil
-	}
-	if tag.AACPacketType != libflv.AAC_RAW {
-		return nil
-	}
-	//AAC RTP timestamp uses sample-rate clock. Sequence header gives
-	//us the rate; default to 44100 if absent.
-	rate := 44100
-	if tag.SoundRate < 4 {
+	switch tag.SoundFormat {
+	case libflv.FLV_AUDIO_AAC:
+		if tag.AACPacketType != libflv.AAC_RAW {
+			return nil
+		}
+		//AAC RTP timestamp uses sample-rate clock; default 44.1 kHz.
+		rate := 44100
 		switch tag.SoundRate {
 		case 0:
 			rate = 5500
@@ -351,15 +377,24 @@ func (s *rtspSession) sendAudio(tag *libflv.AudioTag) error {
 			rate = 11025
 		case 2:
 			rate = 22050
-		case 3:
-			rate = 44100
 		}
+		ts := uint32(uint64(tag.GetTagInfo().TimeStamp) * uint64(rate) / 1000)
+		frame := librtsp.AdtsToRaw(tag.Data())
+		payload := librtsp.PackAACFrame(frame)
+		pkt := s.audioRTP.Pack(true, ts, payload)
+		return s.writeInterleaved(uint8(s.audioChan), pkt)
+
+	case libflv.FLV_AUDIO_OPUS:
+		if tag.AACPacketType != libflv.AAC_RAW {
+			return nil //skip Opus sequence header (no in-RTP equivalent)
+		}
+		//Opus RTP clock is fixed at 48 kHz per RFC 7587 §4.1.
+		ts := uint32(uint64(tag.GetTagInfo().TimeStamp) * librtsp.OpusClockRate / 1000)
+		payload := librtsp.PackOpusFrame(tag.Data())
+		pkt := s.audioRTP.Pack(true, ts, payload)
+		return s.writeInterleaved(uint8(s.audioChan), pkt)
 	}
-	ts := uint32(uint64(tag.GetTagInfo().TimeStamp) * uint64(rate) / 1000)
-	frame := librtsp.AdtsToRaw(tag.Data())
-	payload := librtsp.PackAACFrame(frame)
-	pkt := s.audioRTP.Pack(true, ts, payload)
-	return s.writeInterleaved(uint8(s.audioChan), pkt)
+	return nil
 }
 
 func (s *rtspSession) writeInterleaved(ch uint8, rtp []byte) error {
@@ -430,21 +465,45 @@ func buildSDPFromRoom(room *Room) []byte {
 	if videoHdr == nil || videoHdr.AVCPacketType != libflv.AVC_SEQUENCE_HEADER {
 		return nil
 	}
-	sps, pps, _, _, err := parseAVCDCRForRTSP(videoHdr.Data())
-	if err != nil {
-		return nil
-	}
 	p := librtsp.SDPParams{
 		StreamID: room.RoomID,
 		HasVideo: true,
-		SPS:      sps,
-		PPS:      pps,
 	}
-	if audioHdr != nil && audioHdr.SoundFormat == libflv.FLV_AUDIO_AAC &&
-		audioHdr.AACPacketType == libflv.AAC_SEQUENCE_HEADER {
-		p.HasAudio = true
-		p.AudioConfig = audioHdr.Data()
-		p.AudioRate = decodeAACRate(audioHdr.SoundRate)
+	switch videoHdr.CodecID {
+	case libflv.FLV_VIDEO_AVC:
+		sps, pps, _, _, err := parseAVCDCRForRTSP(videoHdr.Data())
+		if err != nil {
+			return nil
+		}
+		p.SPS, p.PPS = sps, pps
+	case libflv.FLV_VIDEO_HEVC:
+		vps, sps, pps, err := parseHEVCDCRForRTSP(videoHdr.Data())
+		if err != nil {
+			//Players will need in-band parameter sets; emit minimal
+			//SDP without sprop-* fields rather than fail outright.
+			p.IsHEVC = true
+		} else {
+			p.IsHEVC = true
+			p.VPS, p.SPS, p.PPS = vps, sps, pps
+		}
+	default:
+		return nil
+	}
+
+	if audioHdr != nil {
+		switch audioHdr.SoundFormat {
+		case libflv.FLV_AUDIO_AAC:
+			if audioHdr.AACPacketType != libflv.AAC_SEQUENCE_HEADER {
+				break
+			}
+			p.HasAudio = true
+			p.AudioConfig = audioHdr.Data()
+			p.AudioRate = decodeAACRate(audioHdr.SoundRate)
+		case libflv.FLV_AUDIO_OPUS:
+			p.HasAudio = true
+			p.IsOpus = true
+			p.AudioRate = librtsp.OpusClockRate
+		}
 		if audioHdr.SoundType == libflv.SND_STEREO {
 			p.AudioChans = 2
 		} else {
@@ -468,6 +527,62 @@ func decodeAACRate(code uint8) int {
 	default:
 		return 44100
 	}
+}
+
+// parseHEVCDCRForRTSP pulls VPS/SPS/PPS NALs out of an HEVC
+// HEVCDecoderConfigurationRecord (ISO/IEC 14496-15 §8.3.3.1.2). The
+// record nests parameter sets under "arrays of NAL units" indexed by
+// nal_unit_type (32 = VPS, 33 = SPS, 34 = PPS). Returns the first
+// occurrence of each.
+func parseHEVCDCRForRTSP(src []byte) (vps, sps, pps []byte, err error) {
+	if len(src) < 23 {
+		err = fmt.Errorf("HEVC DCR too short: %d bytes", len(src))
+		return
+	}
+	off := 22 //skip the fixed 22-byte profile/level/timing prefix
+	numArrays := int(src[off])
+	off++
+	for i := 0; i < numArrays; i++ {
+		if off+3 > len(src) {
+			err = fmt.Errorf("HEVC DCR truncated at array header")
+			return
+		}
+		nalType := src[off] & 0x3F
+		numNalus := int(src[off+1])<<8 | int(src[off+2])
+		off += 3
+		for j := 0; j < numNalus; j++ {
+			if off+2 > len(src) {
+				err = fmt.Errorf("HEVC DCR truncated at NAL length")
+				return
+			}
+			n := int(src[off])<<8 | int(src[off+1])
+			off += 2
+			if off+n > len(src) {
+				err = fmt.Errorf("HEVC DCR truncated in NAL body")
+				return
+			}
+			data := append([]byte(nil), src[off:off+n]...)
+			off += n
+			switch nalType {
+			case 32:
+				if vps == nil {
+					vps = data
+				}
+			case 33:
+				if sps == nil {
+					sps = data
+				}
+			case 34:
+				if pps == nil {
+					pps = data
+				}
+			}
+		}
+	}
+	if sps == nil || pps == nil {
+		err = fmt.Errorf("HEVC DCR missing SPS or PPS")
+	}
+	return
 }
 
 // parseAVCDCRForRTSP parses an AVCDecoderConfigurationRecord into its

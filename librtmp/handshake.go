@@ -151,8 +151,66 @@ func HandshakeServer(rtmp *RTMP) (err error) {
 	return nil
 }
 
+// HandshakeClient drives the outbound (client-side) RTMP handshake.
+// Sends C0+C1 then reads S0+S1+S2 then sends C2. Implements only the
+// SIMPLE handshake — most permissive servers accept it. The complex
+// digest variants are server-side niceties for Flash compatibility.
 func HandshakeClient(rtmp *RTMP) (err error) {
-	//TODO
+	p := &Peer{
+		clientVersion: 3,
+		handshakeMode: SIMPLE,
+	}
+
+	//C0
+	if err := rtmp.writerConn.WriteFull([]byte{p.clientVersion}); err != nil {
+		return errors.Wrap(err, "write c0")
+	}
+
+	//C1: 4-byte timestamp + 4 zero bytes + 1528 random bytes.
+	p.clientTimeStamp = uint32(time.Now().Unix())
+	c1 := make([]byte, C1_LEN)
+	binary.BigEndian.PutUint32(c1[:4], p.clientTimeStamp)
+	_, _ = rand.Read(c1[8:])
+	if err := rtmp.writerConn.WriteFull(c1); err != nil {
+		return errors.Wrap(err, "write c1")
+	}
+	p.clientRandom = c1[8:]
+
+	//S0
+	s0 := make([]byte, S0_LEN)
+	if err := rtmp.readerConn.ReadFull(s0); err != nil {
+		return errors.Wrap(err, "read s0")
+	}
+	p.serverVersion = s0[0]
+	if p.serverVersion != p.clientVersion {
+		return errors.Errorf("server version mismatch: %d vs %d",
+			p.serverVersion, p.clientVersion)
+	}
+
+	//S1
+	s1 := make([]byte, S1_LEN)
+	if err := rtmp.readerConn.ReadFull(s1); err != nil {
+		return errors.Wrap(err, "read s1")
+	}
+	p.serverTimeStamp = binary.BigEndian.Uint32(s1[:4])
+	p.serverRandom = s1[8:]
+
+	//S2 — server's echo of C1. We accept whatever it says; some
+	//implementations zero parts of it.
+	s2 := make([]byte, S2_LEN)
+	if err := rtmp.readerConn.ReadFull(s2); err != nil {
+		return errors.Wrap(err, "read s2")
+	}
+
+	//C2 — echo S1's timestamp + random back so the server can verify
+	//round-trip. Per spec we should also include our own timestamp at
+	//bytes 4..8; FFmpeg writes zeros there and most servers accept.
+	c2 := make([]byte, C2_LEN)
+	binary.BigEndian.PutUint32(c2[:4], p.serverTimeStamp)
+	copy(c2[8:], p.serverRandom)
+	if err := rtmp.writerConn.WriteFull(c2); err != nil {
+		return errors.Wrap(err, "write c2")
+	}
 	return nil
 }
 

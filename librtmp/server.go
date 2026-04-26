@@ -26,6 +26,8 @@ type server struct {
 	hlsAddress  string          //default: ""
 	rtspAddress string          //default: ""
 	apps        map[string]*App //appName, roomID, *room
+	pulls       []pullSpec      //configured upstreams to pull on Handler() startup
+	srtSpecs    []srtSpec       //configured SRT publish endpoints
 }
 
 func NewServer(address string, apps ...string) (s *server) {
@@ -69,6 +71,35 @@ func (s *server) WithDASH() *server {
 // interleaved, video is H.264 single-NAL/FU-A, audio is AAC-hbr.
 func (s *server) WithRTSP(address string) *server {
 	s.rtspAddress = address
+	return s
+}
+
+// WithRTMPPull schedules an outbound RTMP pull. On Handler() start the
+// server connects to remoteURL, performs connect→createStream→play,
+// and forwards every received audio/video/data tag into the local
+// apps[localApp]/rooms[localStream] broadcast — so HTTP-FLV / HLS /
+// DASH / RTSP subscribers see it as if a publisher pushed locally.
+// Reconnects with exponential backoff up to 30 s on transient errors.
+func (s *server) WithRTMPPull(remoteURL, localApp, localStream string) *server {
+	s.pulls = append(s.pulls, pullSpec{
+		remoteURL: remoteURL,
+		app:       localApp,
+		streamID:  localStream,
+	})
+	return s
+}
+
+// WithSRT enables a UDP-based SRT (Live mode, no encryption) listener
+// on the given address. When a publisher connects with `ffmpeg -f
+// mpegts -c copy -f srt 'srt://host:port?streamid=...'`, the
+// transported MPEG-TS is demuxed back into FLV tags and forwarded into
+// apps[localApp]/rooms[localStream] just like an RTMP publish would.
+func (s *server) WithSRT(address, localApp, localStream string) *server {
+	s.srtSpecs = append(s.srtSpecs, srtSpec{
+		address:  address,
+		app:      localApp,
+		streamID: localStream,
+	})
 	return s
 }
 
@@ -122,6 +153,31 @@ func (s *server) Handler() error {
 		}()
 	}
 	wg.Wait()
+
+	//Bring up SRT listeners (one per WithSRT call). Each owns a UDP
+	//socket and dispatches to its own bridge.
+	for i := range s.srtSpecs {
+		startSRT(s, s.srtSpecs[i])
+	}
+
+	//Schedule outbound pulls. Each gets its own goroutine that
+	//reconnects with exponential backoff if the upstream drops.
+	for i := range s.pulls {
+		spec := s.pulls[i]
+		go func() {
+			backoff := time.Second
+			for {
+				pc := newPullClient(s, spec)
+				if err := pc.Run(); err != nil {
+					fmt.Printf("rtmp pull %s: %v\n", spec.remoteURL, err)
+				}
+				time.Sleep(backoff)
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
+			}
+		}()
+	}
 
 	rtmpListener, err := newTCPListener(s.rtmpAddress)
 	if err != nil {
