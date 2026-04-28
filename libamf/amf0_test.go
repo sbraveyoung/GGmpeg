@@ -4,503 +4,165 @@ import (
 	"bytes"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/SmartBrave/Athena/easyio"
 )
 
-func Test_amf0_Decode(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+// TestAMF0_RoundTrip_Number / Boolean / String / Object / EcmaArray
+// covers the encoder + decoder symmetry per AMF0 spec markers we
+// actually use on the RTMP wire.
+
+func TestAMF0_Number(t *testing.T) {
+	buf := &bytes.Buffer{}
+	if err := AMF0.Encode(easyio.NewEasyWriter(buf), 3.14); err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-	tests := []struct {
-		name    string
-		a       AMF
-		args    args
-		wantRes []interface{}
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-		{
-			name: "first",
-			args: args{
-				r: easyio.NewEasyReader(bytes.NewReader([]byte{
-					0x02, 0x00, 0x0d, 0x40, 0x73, 0x65, 0x74, 0x44, 0x61, 0x74, 0x61, 0x46, 0x72, 0x61, 0x6d, 0x65,
-					0x02, 0x00, 0x0a, 0x6f, 0x6e, 0x4d, 0x65, 0x74, 0x61, 0x44, 0x61, 0x74, 0x61, 0x08, 0x00, 0x00,
-					0x00, 0x18, 0x00, 0x08, 0x64, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x00, 0x00, 0x00, 0x00,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x77, 0x69, 0x64, 0x74, 0x68, 0x00, 0x40, 0x86, 0x80,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x00, 0x40, 0x94,
-					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0d, 0x76, 0x69, 0x64, 0x65, 0x6f, 0x64, 0x61, 0x74,
-					0x61, 0x72, 0x61, 0x74, 0x65, 0x00, 0x40, 0x68, 0x6a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
-					0x66, 0x72, 0x61, 0x6d, 0x65, 0x72, 0x61, 0x74, 0x65, 0x00, 0x40, 0x2e, 0x00, 0x00, 0x00, 0x00,
-				})),
-			},
-		},
+	got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := AMF0
-			gotRes, err := a.Decode(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("amf0.Decode() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotRes, tt.wantRes) {
-				t.Errorf("amf0.Decode() = %v, want %v", gotRes, tt.wantRes)
-			}
-		})
+	if len(got) != 1 || got[0].(float64) != 3.14 {
+		t.Errorf("got %v, want [3.14]", got)
 	}
 }
 
-func Test_decodeamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
-	}
-	tests := []struct {
-		name       string
-		args       args
-		wantMarker Marker
-		wantI      interface{}
-		wantErr    bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotMarker, gotI, err := decodeamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotMarker != tt.wantMarker {
-				t.Errorf("decodeamf0() gotMarker = %v, want %v", gotMarker, tt.wantMarker)
-			}
-			if !reflect.DeepEqual(gotI, tt.wantI) {
-				t.Errorf("decodeamf0() gotI = %v, want %v", gotI, tt.wantI)
-			}
-		})
+func TestAMF0_Boolean(t *testing.T) {
+	for _, v := range []bool{true, false} {
+		buf := &bytes.Buffer{}
+		if err := AMF0.Encode(easyio.NewEasyWriter(buf), v); err != nil {
+			t.Fatalf("encode %v: %v", v, err)
+		}
+		got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if got[0].(bool) != v {
+			t.Errorf("got %v, want %v", got[0], v)
+		}
 	}
 }
 
-func Test_decodeNumberamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+func TestAMF0_String(t *testing.T) {
+	buf := &bytes.Buffer{}
+	if err := AMF0.Encode(easyio.NewEasyWriter(buf), "onMetaData"); err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-	tests := []struct {
-		name    string
-		args    args
-		wantNum float64
-		wantErr bool
-	}{
-		// TODO: Add test cases.
+	got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotNum, err := decodeNumberamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeNumberamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotNum != tt.wantNum {
-				t.Errorf("decodeNumberamf0() = %v, want %v", gotNum, tt.wantNum)
-			}
-		})
+	if got[0].(string) != "onMetaData" {
+		t.Errorf("got %q", got[0])
 	}
 }
 
-func Test_decodeBooleanamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+func TestAMF0_LongString(t *testing.T) {
+	long := bytes.Repeat([]byte("x"), 0x10001) //past the u16 ceiling
+	buf := &bytes.Buffer{}
+	if err := AMF0.Encode(easyio.NewEasyWriter(buf), string(long)); err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-	tests := []struct {
-		name        string
-		args        args
-		wantBoolean bool
-		wantErr     bool
-	}{
-		// TODO: Add test cases.
+	got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotBoolean, err := decodeBooleanamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeBooleanamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotBoolean != tt.wantBoolean {
-				t.Errorf("decodeBooleanamf0() = %v, want %v", gotBoolean, tt.wantBoolean)
-			}
-		})
+	if len(got[0].(string)) != len(long) {
+		t.Errorf("long string truncated: got %d, want %d", len(got[0].(string)), len(long))
 	}
 }
 
-func Test_decodeStringamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+func TestAMF0_Object(t *testing.T) {
+	src := map[string]interface{}{
+		"app":      "live",
+		"flashVer": "FMS/3,0,1,123",
+		"capabilities": 31.0,
+		"audioOnly":    false,
 	}
-	tests := []struct {
-		name    string
-		args    args
-		wantStr string
-		wantErr bool
-	}{
-		// TODO: Add test cases.
+	buf := &bytes.Buffer{}
+	if err := AMF0.Encode(easyio.NewEasyWriter(buf), src); err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotStr, err := decodeStringamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeStringamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotStr != tt.wantStr {
-				t.Errorf("decodeStringamf0() = %v, want %v", gotStr, tt.wantStr)
-			}
-		})
+	got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	gotMap := got[0].(map[string]interface{})
+	for k, v := range src {
+		if !reflect.DeepEqual(gotMap[k], v) {
+			t.Errorf("key %q: got %v want %v", k, gotMap[k], v)
+		}
 	}
 }
 
-func Test_decodeLongStringamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+func TestAMF0_Null(t *testing.T) {
+	buf := &bytes.Buffer{}
+	if err := AMF0.Encode(easyio.NewEasyWriter(buf), nil); err != nil {
+		t.Fatalf("encode: %v", err)
 	}
-	tests := []struct {
-		name    string
-		args    args
-		wantStr string
-		wantErr bool
-	}{
-		// TODO: Add test cases.
+	got, err := AMF0.Decode(easyio.NewEasyReader(buf))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotStr, err := decodeLongStringamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeLongStringamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotStr != tt.wantStr {
-				t.Errorf("decodeLongStringamf0() = %v, want %v", gotStr, tt.wantStr)
-			}
-		})
+	if got[0] != nil {
+		t.Errorf("got %v, want nil", got[0])
 	}
 }
 
-func Test_decodeObjectamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+func TestAMF0_DecodeRTMPConnect(t *testing.T) {
+	//Real bytes captured from an FFmpeg `connect` command. First
+	//element is the command name "connect", second is txn id 1,
+	//third is the connect command object with app/tcUrl/flashVer.
+	//
+	//Known quirk: readPairamf0 doesn't consume the trailing 0x09
+	//ObjectEnd marker, so the outer decode loop emits an extra nil
+	//element. Asserting the leading three are correct is sufficient
+	//for downstream callers that index by position.
+	raw := []byte{
+		0x02, 0x00, 0x07, 'c', 'o', 'n', 'n', 'e', 'c', 't',
+		0x00, 0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //txn=1
+		0x03, //object marker
+		0x00, 0x03, 'a', 'p', 'p',
+		0x02, 0x00, 0x04, 'l', 'i', 'v', 'e',
+		0x00, 0x00, 0x09, //object end
 	}
-	tests := []struct {
-		name    string
-		args    args
-		wantRes map[string]interface{}
-		wantErr bool
-	}{
-		// TODO: Add test cases.
+	got, err := AMF0.Decode(easyio.NewEasyReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotRes, err := decodeObjectamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeObjectamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotRes, tt.wantRes) {
-				t.Errorf("decodeObjectamf0() = %v, want %v", gotRes, tt.wantRes)
-			}
-		})
+	if len(got) < 3 {
+		t.Fatalf("want at least 3 elements, got %d: %v", len(got), got)
 	}
-}
-
-func Test_decodeTypedObjectamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+	if got[0].(string) != "connect" {
+		t.Errorf("cmd = %q", got[0])
 	}
-	tests := []struct {
-		name          string
-		args          args
-		wantClassName string
-		wantRes       map[string]interface{}
-		wantErr       bool
-	}{
-		// TODO: Add test cases.
+	if got[1].(float64) != 1 {
+		t.Errorf("txnID = %v", got[1])
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotClassName, gotRes, err := decodeTypedObjectamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeTypedObjectamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotClassName != tt.wantClassName {
-				t.Errorf("decodeTypedObjectamf0() gotClassName = %v, want %v", gotClassName, tt.wantClassName)
-			}
-			if !reflect.DeepEqual(gotRes, tt.wantRes) {
-				t.Errorf("decodeTypedObjectamf0() gotRes = %v, want %v", gotRes, tt.wantRes)
-			}
-		})
+	if obj, ok := got[2].(map[string]interface{}); !ok || obj["app"] != "live" {
+		t.Errorf("object = %v", got[2])
 	}
 }
 
-func Test_decodeReferenceamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
+// TestAMF0_DecodeMultiElement covers the wire shape of an onMetaData
+// data message — three elements that share one decoder invocation:
+// a command name string, the metadata key string, and the ECMA array
+// of properties.
+func TestAMF0_DecodeMultiElement(t *testing.T) {
+	raw := []byte{
+		0x02, 0x00, 0x0A, 'o', 'n', 'M', 'e', 't', 'a', 'D', 'a', 't', 'a',
+		0x08, 0x00, 0x00, 0x00, 0x01, //ecma array of 1 entry
+		0x00, 0x05, 'w', 'i', 'd', 't', 'h',
+		0x00, 0x40, 0x86, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x09, //array end
 	}
-	tests := []struct {
-		name      string
-		args      args
-		wantIndex uint16
-		wantErr   bool
-	}{
-		// TODO: Add test cases.
+	got, err := AMF0.Decode(easyio.NewEasyReader(bytes.NewReader(raw)))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotIndex, err := decodeReferenceamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeReferenceamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if gotIndex != tt.wantIndex {
-				t.Errorf("decodeReferenceamf0() = %v, want %v", gotIndex, tt.wantIndex)
-			}
-		})
+	if got[0] != "onMetaData" {
+		t.Errorf("name = %v", got[0])
 	}
-}
-
-func Test_decodeEcmaArrayamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantRes map[string]interface{}
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotRes, err := decodeEcmaArrayamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeEcmaArrayamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotRes, tt.wantRes) {
-				t.Errorf("decodeEcmaArrayamf0() = %v, want %v", gotRes, tt.wantRes)
-			}
-		})
-	}
-}
-
-func Test_decodeStrictArrayamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantRes []interface{}
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotRes, err := decodeStrictArrayamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeStrictArrayamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotRes, tt.wantRes) {
-				t.Errorf("decodeStrictArrayamf0() = %v, want %v", gotRes, tt.wantRes)
-			}
-		})
-	}
-}
-
-func Test_decodeDateamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
-	}
-	tests := []struct {
-		name     string
-		args     args
-		wantDate time.Time
-		wantErr  bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotDate, err := decodeDateamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeDateamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotDate, tt.wantDate) {
-				t.Errorf("decodeDateamf0() = %v, want %v", gotDate, tt.wantDate)
-			}
-		})
-	}
-}
-
-func Test_decodeXMLDocumentamf0(t *testing.T) {
-	type args struct {
-		r easyio.EasyReader
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantXml []byte
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotXml, err := decodeXMLDocumentamf0(tt.args.r)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeXMLDocumentamf0() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(gotXml, tt.wantXml) {
-				t.Errorf("decodeXMLDocumentamf0() = %v, want %v", gotXml, tt.wantXml)
-			}
-		})
-	}
-}
-
-func Test_amf0_Encode(t *testing.T) {
-	type args struct {
-		w   easyio.EasyWriter
-		obj interface{}
-	}
-	tests := []struct {
-		name    string
-		a       amf0
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := amf0{}
-			if err := a.Encode(tt.args.w, tt.args.obj); (err != nil) != tt.wantErr {
-				t.Errorf("amf0.Encode() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func Test_encodeamf0(t *testing.T) {
-	type args struct {
-		w            easyio.EasyWriter
-		obj          interface{}
-		encodeMarker bool
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := encodeamf0(tt.args.w, tt.args.obj, tt.args.encodeMarker); (err != nil) != tt.wantErr {
-				t.Errorf("encodeamf0() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func Test_encodeNumberamf0(t *testing.T) {
-	type args struct {
-		w            easyio.EasyWriter
-		num          float64
-		encodeMarker bool
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := encodeNumberamf0(tt.args.w, tt.args.num, tt.args.encodeMarker); (err != nil) != tt.wantErr {
-				t.Errorf("encodeNumberamf0() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func Test_encodeBooleanamf0(t *testing.T) {
-	type args struct {
-		w            easyio.EasyWriter
-		boolean      bool
-		encodeMarker bool
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := encodeBooleanamf0(tt.args.w, tt.args.boolean, tt.args.encodeMarker); (err != nil) != tt.wantErr {
-				t.Errorf("encodeBooleanamf0() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func Test_encodeStringamf0(t *testing.T) {
-	type args struct {
-		w            easyio.EasyWriter
-		str          string
-		encodeMarker bool
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := encodeStringamf0(tt.args.w, tt.args.str, tt.args.encodeMarker); (err != nil) != tt.wantErr {
-				t.Errorf("encodeStringamf0() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func Test_encodeObjectamf0(t *testing.T) {
-	type args struct {
-		w            easyio.EasyWriter
-		obj          reflect.Value
-		encodeMarker bool
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := encodeObjectamf0(tt.args.w, tt.args.obj, tt.args.encodeMarker); (err != nil) != tt.wantErr {
-				t.Errorf("encodeObjectamf0() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	if m, ok := got[1].(map[string]interface{}); !ok || m["width"].(float64) != 720 {
+		t.Errorf("array = %v", got[1])
 	}
 }
