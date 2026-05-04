@@ -3,7 +3,7 @@ package librtmp
 import (
 	"fmt"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libflv"
 )
 
 type VideoCodec float64

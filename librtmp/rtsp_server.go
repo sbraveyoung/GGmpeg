@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/SmartBrave/Athena/broadcast"
-	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/GGmpeg/librtsp"
+	"github.com/sbraveyoung/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/librtsp"
 )
 
 // rtspSession owns one RTSP TCP connection. RTSP is stateful — the

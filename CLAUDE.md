@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-GGmpeg is a Go library (module `github.com/SmartBrave/GGmpeg`, Go 1.17) that implements multimedia streaming protocols from scratch — RTMP ingest, HTTP-FLV playback, and (WIP) HLS playback. It is not production-ready; treat it as a learning/reference implementation.
+GGmpeg is a Go library (module `github.com/sbraveyoung/GGmpeg`, Go 1.17) that implements multimedia streaming protocols from scratch — RTMP ingest, HTTP-FLV playback, and (WIP) HLS playback. It is not production-ready; treat it as a learning/reference implementation.
 
 A running server is demonstrated in `demo/rtmp_server.go`, which is also the binary built by the Dockerfile:
 
@@ -29,8 +29,8 @@ go test ./libamf/
 go test ./libmpeg/ -run TestPSI
 
 # Docker build/run (see dockerfile header)
-docker build -t smartbrave/rtmp_server:latest .
-docker run --rm --name rtmp_server -p 1935:1935 -p 8080:8080 smartbrave/rtmp_server:latest
+docker build -t sbraveyoung/rtmp_server:latest .
+docker run --rm --name rtmp_server -p 1935:1935 -p 8080:8080 sbraveyoung/rtmp_server:latest
 ```
 
 Tests live only in `libamf/` and `libmpeg/`. The RTMP/FLV/HLS glue layers are exercised end-to-end via the demo server (publish with OBS/ffmpeg to `rtmp://localhost:1935/live/<id>`, play via RTMP or `http://localhost:8080/live/<id>.flv`).

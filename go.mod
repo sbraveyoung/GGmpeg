@@ -1,4 +1,4 @@
-module github.com/SmartBrave/GGmpeg
+module github.com/sbraveyoung/GGmpeg
 
 go 1.17
 

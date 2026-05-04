@@ -3,8 +3,8 @@ package librtmp
 import (
 	"sync"
 
-	"github.com/SmartBrave/GGmpeg/libdash"
-	"github.com/SmartBrave/GGmpeg/libhls"
+	"github.com/sbraveyoung/GGmpeg/libdash"
+	"github.com/sbraveyoung/GGmpeg/libhls"
 )
 
 type App struct {

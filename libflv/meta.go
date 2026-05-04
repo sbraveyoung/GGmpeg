@@ -7,7 +7,7 @@ import (
 
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/sbraveyoung/GGmpeg/libamf"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"

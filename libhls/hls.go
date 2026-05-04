@@ -13,10 +13,10 @@ import (
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libaac"
-	"github.com/SmartBrave/GGmpeg/libavc"
-	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/GGmpeg/libmpeg"
+	"github.com/sbraveyoung/GGmpeg/libaac"
+	"github.com/sbraveyoung/GGmpeg/libavc"
+	"github.com/sbraveyoung/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libmpeg"
 )
 
 type HLS_MODE uint8

@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/sbraveyoung/GGmpeg/libamf"
 )
 
 // AggregateMessage (message type 22) is a container whose payload is a

@@ -7,7 +7,9 @@
                       |_|         |___/
 ```
 
-[GGmpeg](https://github.com/SmartBrave/GGmpeg) is a multi-protocol media streaming **library** in pure Go that pays tribute to [FFmpeg](https://ffmpeg.org/). It implements the wire protocols from scratch (no `pion/`, `gortsplib`, etc.) so the codebase doubles as a reference implementation.
+**English** | [简体中文](./README.zh.md)
+
+[GGmpeg](https://github.com/sbraveyoung/GGmpeg) is a multi-protocol media streaming **library** in pure Go that pays tribute to [FFmpeg](https://ffmpeg.org/). It implements the wire protocols from scratch (no `pion/`, `gortsplib`, etc.) so the codebase doubles as a reference implementation.
 
 > **NOTE: GGmpeg is a learning / reference project. Many edge cases (encryption, congestion control, full codec support) are intentionally minimal. Please do NOT use it in production.**
 
@@ -54,10 +56,10 @@
 ### Run via Docker
 
 ```bash
-docker build -t smartbrave/rtmp_server:latest .
+docker build -t sbraveyoung/rtmp_server:latest .
 docker run --rm --name rtmp_server \
   -p 1935:1935 -p 8080:8080 -p 8081:8081 \
-  smartbrave/rtmp_server:latest
+  sbraveyoung/rtmp_server:latest
 ```
 
 ### Run from source
@@ -95,7 +97,7 @@ The demo wires every protocol via a method-chain on `librtmp.NewServer`:
 ```go
 package main
 
-import "github.com/SmartBrave/GGmpeg/librtmp"
+import "github.com/sbraveyoung/GGmpeg/librtmp"
 
 func main() {
     librtmp.NewServer(":1935", "live").

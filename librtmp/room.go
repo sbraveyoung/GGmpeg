@@ -7,7 +7,7 @@ import (
 
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libflv"
 )
 
 type Room struct {

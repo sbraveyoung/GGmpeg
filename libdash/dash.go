@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/SmartBrave/Athena/broadcast"
-	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/GGmpeg/libmp4"
+	"github.com/sbraveyoung/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libmp4"
 )
 
 // Default segment timescale: 1000 → durations are in milliseconds,

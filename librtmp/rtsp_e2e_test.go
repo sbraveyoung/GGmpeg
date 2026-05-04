@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libflv"
 )
 
 // TestRTSP_E2E_OptionsDescribe stands up the RTSP session loop on a

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/GGmpeg/libsrt"
+	"github.com/sbraveyoung/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libsrt"
 )
 
 // srtSpec configures one SRT publish endpoint. The listener accepts

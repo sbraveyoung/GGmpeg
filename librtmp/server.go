@@ -16,8 +16,8 @@ import (
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libdash"
-	"github.com/SmartBrave/GGmpeg/libhls"
+	"github.com/sbraveyoung/GGmpeg/libdash"
+	"github.com/sbraveyoung/GGmpeg/libhls"
 )
 
 type server struct {

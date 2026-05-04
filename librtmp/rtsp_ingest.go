@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
-	"github.com/SmartBrave/GGmpeg/librtsp"
+	"github.com/sbraveyoung/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/librtsp"
 )
 
 // rtspIngest carries the publisher-side state added when the client

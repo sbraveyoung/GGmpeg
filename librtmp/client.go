@@ -12,7 +12,7 @@ import (
 
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libamf"
+	"github.com/sbraveyoung/GGmpeg/libamf"
 )
 
 // pullSpec is one pre-configured upstream stream to pull. The server

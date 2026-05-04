@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libflv"
 )
 
 type AudioCodec float64

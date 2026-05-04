@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SmartBrave/GGmpeg/libhls"
+	"github.com/sbraveyoung/GGmpeg/libhls"
 )
 
 // TestSmoke_BuilderChain asserts the With* method chain compiles, is
