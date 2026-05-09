@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/SmartBrave/GGmpeg/libflv"
+	"github.com/sbraveyoung/GGmpeg/libflv"
 )
 
 type AudioCodec float64
@@ -46,20 +46,23 @@ func NewAudioMessage(mb MessageBase, fields ...interface{}) (am *AudioMessage) {
 }
 
 func (am *AudioMessage) Send() (err error) {
-	for i := 0; i >= 0; i++ {
-		fmt := FMT0
-		if i != 0 {
-			fmt = FMT3
+	chunkSize := am.rtmp.ownMaxChunkSize
+	for i := 0; ; i++ {
+		lIndex := i * chunkSize
+		if lIndex >= len(am.messagePayload) {
+			break
 		}
-
-		lIndex := i * int(am.rtmp.ownMaxChunkSize)
-		rIndex := (i + 1) * int(am.rtmp.ownMaxChunkSize)
+		rIndex := lIndex + chunkSize
 		if rIndex > len(am.messagePayload) {
 			rIndex = len(am.messagePayload)
-			i = -2
 		}
-		//NewChunk(AUDIO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 8, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
-		NewChunk(AUDIO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmt, 4, am.messagePayload[lIndex:rIndex]).Send(am.rtmp)
+		fmtType := FMT0
+		if i != 0 {
+			fmtType = FMT3
+		}
+		if sendErr := NewChunk(AUDIO_MESSAGE, uint32(len(am.messagePayload)), am.messageTime, fmtType, csidAudio, am.messagePayload[lIndex:rIndex]).Send(am.rtmp); sendErr != nil {
+			return sendErr
+		}
 	}
 	return nil
 }
@@ -70,12 +73,19 @@ func (am *AudioMessage) Parse() (err error) {
 		TimeStamp: am.messageTime,
 		StreamID:  0,
 	}, am.messagePayload)
+	if err != nil {
+		return err
+	}
 	am.audioTag.DataSize = uint32(len(am.audioTag.Data()))
-	return err
+	return nil
 }
 
 func (am *AudioMessage) Do() (err error) {
+	if am.rtmp.room == nil {
+		return nil
+	}
 	if am.audioTag.SoundFormat == libflv.FLV_AUDIO_AAC && am.audioTag.AACPacketType == libflv.AAC_SEQUENCE_HEADER {
+		am.rtmp.room.setAudioSequenceHeader(am.audioTag)
 		am.rtmp.room.GOP.WriteMeta(am.audioTag)
 		fmt.Printf("write packet audio :%+v\n", am.audioTag)
 		return nil

@@ -1,7 +1,9 @@
 package librtmp
 
 import (
-	"github.com/SmartBrave/GGmpeg/libamf"
+	"fmt"
+
+	"github.com/sbraveyoung/GGmpeg/libamf"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/pkg/errors"
 )
@@ -104,6 +106,9 @@ const (
 	DATA_MESSAGE_AMF0                    //18
 	SHARE_OBJECT_MESSAGE_AMF0            //19
 	COMMAND_MESSAGE_AMF0                 //20
+
+	//aggregate message (RTMP 1.0 §5.4.2 / FLV v10.1 §E.4.1)
+	AGGREGATE_MESSAGE MessageType = 22
 )
 
 func ParseMessage(rtmp *RTMP) (err error) {
@@ -132,6 +137,7 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			case SET_CHUNK_SIZE:
 				message = NewSetChunkSizeMessage(mb)
 			case ABORT_MESSAGE:
+				message = NewAbortMessage(mb)
 			case ACKNOWLEDGEMENT:
 				message = NewAcknowledgeMessage(mb)
 			case USER_CONTROL_MESSAGE:
@@ -139,11 +145,15 @@ func ParseMessage(rtmp *RTMP) (err error) {
 			case WINDOW_ACKNOWLEDGEMENT_SIZE:
 				message = NewWindowAcknowledgeSizeMessage(mb)
 			case SET_PEER_BANDWIDTH:
+				message = NewSetPeerBandWidthMessage(mb)
 
 			case AUDIO_MESSAGE:
 				message = NewAudioMessage(mb)
 			case VIDEO_MESSAGE:
 				message = NewVideoMessage(mb)
+
+			case AGGREGATE_MESSAGE:
+				message = NewAggregateMessage(mb)
 
 			case DATA_MESSAGE_AMF3:
 				// mb.amf = libamf.AMF3
@@ -155,6 +165,10 @@ func ParseMessage(rtmp *RTMP) (err error) {
 				// mb.amf = libamf.AMF3
 				fallthrough
 			case SHARE_OBJECT_MESSAGE_AMF0:
+				//Shared objects are a flash-era state-sync channel we
+				//don't implement. Drain the payload and move on rather
+				//than falling through into the default error branch.
+				message = NewDiscardMessage(mb)
 
 			case COMMAND_MESSAGE_AMF3:
 				// mb.amf = libamf.AMF3
@@ -175,6 +189,32 @@ func ParseMessage(rtmp *RTMP) (err error) {
 		}
 	}
 
-	//	fmt.Printf("[message] --------------- type:%d, timestamp:%d\n", message.GetInfo().messageType, message.GetInfo().messageTime)
+	//Track inbound bytes so we can send Window Acknowledgement messages
+	//on schedule. The sequence number is the cumulative count received.
+	rtmp.bytesReceived += message.GetInfo().messageLength
+	if rtmp.peerWindowAckSize > 0 && rtmp.bytesReceived-rtmp.lastAcked >= rtmp.peerWindowAckSize {
+		ack := NewAcknowledgeMessage(MessageBase{rtmp: rtmp}, rtmp.bytesReceived)
+		if sendErr := ack.Send(); sendErr == nil {
+			rtmp.lastAcked = rtmp.bytesReceived
+		} else {
+			fmt.Println("send acknowledgement error:", sendErr)
+		}
+	}
+
 	return easyerrors.HandleMultiError(easyerrors.Simple(), message.Parse(), message.Do())
 }
+
+// DiscardMessage consumes (and drops) a message whose type we don't
+// implement — used for shared-object and other seldom-seen types so
+// ParseMessage doesn't abort the connection.
+type DiscardMessage struct {
+	MessageBase
+}
+
+func NewDiscardMessage(mb MessageBase) *DiscardMessage {
+	return &DiscardMessage{MessageBase: mb}
+}
+
+func (dm *DiscardMessage) Parse() error { return nil }
+func (dm *DiscardMessage) Do() error    { return nil }
+func (dm *DiscardMessage) Send() error  { return nil }

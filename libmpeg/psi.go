@@ -247,7 +247,21 @@ func (pmt *PMT) Marshal(writer easyio.EasyWriter, writable int) (n int, finish b
 		uint8(pmt.ProgramInfoLength & 0xff),
 	}
 	for streamPID, stream := range pmt.Streams {
-		b = append(b, stream.StreamID)
+		//Per ISO 13818-1 Table 2-29 the PMT entry carries
+		//stream_type (the codec identifier), not the PES header's
+		//stream_id. Fall back to a best-guess derived from stream_id
+		//when StreamType wasn't set explicitly so older callers don't
+		//emit a malformed PMT.
+		streamType := stream.StreamType
+		if streamType == 0 {
+			switch stream.StreamID & 0xF0 {
+			case 0xE0:
+				streamType = 0x1B //H.264 default
+			case 0xC0:
+				streamType = 0x0F //AAC ADTS default
+			}
+		}
+		b = append(b, streamType)
 		b = append(b, 0xe0|uint8(streamPID>>8)&0x1f, uint8(streamPID&0xff))
 		b = append(b, 0xf0|uint8(0), uint8(0))
 	}

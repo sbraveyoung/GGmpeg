@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/SmartBrave/GGmpeg/librtmp"
+	"github.com/sbraveyoung/GGmpeg/librtmp"
 )
 
 func main() {

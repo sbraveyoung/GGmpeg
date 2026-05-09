@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+// CSIDs used by the protocol-control path. The values here predate the
+// project's adoption of the spec's reserved CSID 2 (chunk.Send refuses
+// anything < 3), so we keep distinct values per message type rather
+// than collapsing onto a single control channel.
+const (
+	csidProtocolControl uint32 = 11 //SetChunkSize, WindowAck, Acknowledgement, Abort
+	csidPeerBandWidth   uint32 = 12
+	csidUserControl     uint32 = 13
+	csidCommand         uint32 = 10 //AMF0 command messages
+	csidAudio           uint32 = 4
+	csidVideo           uint32 = 9
+	csidData            uint32 = 6
+)
+
 type WindowAcknowledgeSizeMessage struct {
 	MessageBase
 	AcknowledgementWindowSize uint32
@@ -26,7 +40,7 @@ func NewWindowAcknowledgeSizeMessage(mb MessageBase, fields ...interface{} /*win
 func (wasm *WindowAcknowledgeSizeMessage) Send() (err error) {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(wasm.AcknowledgementWindowSize))
-	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, 4, wasm.messageTime, FMT0, 11, b).Send(wasm.rtmp)
+	return NewChunk(WINDOW_ACKNOWLEDGEMENT_SIZE, 4, wasm.messageTime, FMT0, csidProtocolControl, b).Send(wasm.rtmp)
 }
 
 func (wasm *WindowAcknowledgeSizeMessage) Parse() (err error) {
@@ -36,7 +50,8 @@ func (wasm *WindowAcknowledgeSizeMessage) Parse() (err error) {
 }
 
 func (wasm *WindowAcknowledgeSizeMessage) Do() (err error) {
-	//TODO
+	//remember the peer's window so our Acknowledgement cadence matches.
+	wasm.rtmp.peerWindowAckSize = wasm.AcknowledgementWindowSize
 	return nil
 }
 
@@ -74,11 +89,13 @@ func (spbwm *SetPeerBandWidthMessage) Send() (err error) {
 	b := make([]byte, 5)
 	binary.BigEndian.PutUint32(b, spbwm.AcknowledgementWindowSize)
 	b[4] = byte(spbwm.LimitType)
-	return NewChunk(SET_PEER_BANDWIDTH, 5, spbwm.messageTime, FMT0, 12, b).Send(spbwm.rtmp)
+	return NewChunk(SET_PEER_BANDWIDTH, 5, spbwm.messageTime, FMT0, csidPeerBandWidth, b).Send(spbwm.rtmp)
 }
 
 func (spbwm *SetPeerBandWidthMessage) Parse() (err error) {
-	_ = spbwm.messagePayload[4]
+	if len(spbwm.messagePayload) < 5 {
+		return fmt.Errorf("SetPeerBandWidth payload too short: %d", len(spbwm.messagePayload))
+	}
 	spbwm.AcknowledgementWindowSize = binary.BigEndian.Uint32(spbwm.messagePayload[:4])
 	spbwm.LimitType = LimitType(spbwm.messagePayload[4])
 	fmt.Println("peerBandWidth:", spbwm.AcknowledgementWindowSize)
@@ -87,7 +104,11 @@ func (spbwm *SetPeerBandWidthMessage) Parse() (err error) {
 }
 
 func (spbwm *SetPeerBandWidthMessage) Do() (err error) {
-	//TODO
+	//Per RTMP 1.0 §5.4.5 the receiver MAY reply with its own
+	//WindowAcknowledgementSize if the limit changed. We don't currently
+	//throttle outbound traffic so simply record the value.
+	spbwm.rtmp.peerBandwidth = spbwm.AcknowledgementWindowSize
+	spbwm.rtmp.peerBandwidthLimit = spbwm.LimitType
 	return nil
 }
 
@@ -113,7 +134,6 @@ type UserControlMessage struct {
 func NewUserControlMessage(mb MessageBase, fields ...interface{} /*eventType EventType*/) (ucm *UserControlMessage) {
 	ucm = &UserControlMessage{
 		MessageBase: mb,
-		// EventType:   eventType,
 	}
 	var ok bool
 	switch len(fields) {
@@ -131,42 +151,59 @@ func NewUserControlMessage(mb MessageBase, fields ...interface{} /*eventType Eve
 }
 
 func (ucm *UserControlMessage) Send() (err error) {
-	var b []byte
+	//All user-control events start with a 2-byte EventType. Payload
+	//length depends on the event:
+	// - StreamBegin / StreamEOF / StreamDry / StreamIsRecorded: 4 bytes
+	//   containing the stream id
+	// - SetBufferLength: 4 bytes stream id + 4 bytes buffer length
+	// - PingRequest / PingResponse: 4 bytes timestamp
+	var payload []byte
 	switch ucm.EventType {
-	case StreamBegin:
-		b = make([]byte, 4+2)
-		binary.BigEndian.PutUint16(b, uint16(ucm.EventType))
-		binary.BigEndian.PutUint32(b[2:], ucm.messageStreamID)
-		return NewChunk(USER_CONTROL_MESSAGE, 4+2, ucm.messageTime, FMT0, 13, b).Send(ucm.rtmp)
-	case StreamEOF:
-	case StreamDry:
+	case StreamBegin, StreamEOF, StreamDry, StreamIsRecorded:
+		payload = make([]byte, 2+4)
+		binary.BigEndian.PutUint16(payload, uint16(ucm.EventType))
+		binary.BigEndian.PutUint32(payload[2:], ucm.messageStreamID)
 	case SetBufferLength:
-	case PingRequest:
-	case PingResponse:
+		if len(ucm.EventData) < 4 {
+			return fmt.Errorf("SetBufferLength requires 4-byte buffer length in EventData")
+		}
+		payload = make([]byte, 2+4+4)
+		binary.BigEndian.PutUint16(payload, uint16(ucm.EventType))
+		binary.BigEndian.PutUint32(payload[2:], ucm.messageStreamID)
+		copy(payload[6:], ucm.EventData[:4])
+	case PingRequest, PingResponse:
+		payload = make([]byte, 2+4)
+		binary.BigEndian.PutUint16(payload, uint16(ucm.EventType))
+		if len(ucm.EventData) >= 4 {
+			copy(payload[2:], ucm.EventData[:4])
+		}
 	default:
+		return fmt.Errorf("unsupported user control event type: %d", ucm.EventType)
 	}
-	return nil
+	return NewChunk(USER_CONTROL_MESSAGE, uint32(len(payload)), ucm.messageTime, FMT0, csidUserControl, payload).Send(ucm.rtmp)
 }
 
 func (ucm *UserControlMessage) Parse() (err error) {
-	ucm.EventType = EventType(binary.BigEndian.Uint16(ucm.messagePayload[0:2]))
-	fmt.Println("----------ucm.EventType:", ucm.EventType)
-	switch ucm.EventType {
-	case StreamBegin:
-	case StreamEOF:
-	case StreamDry:
-	case SetBufferLength:
-	case StreamIsRecorded:
-	case PingRequest:
-	case PingResponse:
-	default:
+	if len(ucm.messagePayload) < 2 {
+		return fmt.Errorf("UserControlMessage payload too short: %d", len(ucm.messagePayload))
 	}
-	//TODO
+	ucm.EventType = EventType(binary.BigEndian.Uint16(ucm.messagePayload[0:2]))
+	ucm.EventData = ucm.messagePayload[2:]
+	fmt.Println("----------ucm.EventType:", ucm.EventType)
 	return nil
 }
 
 func (ucm *UserControlMessage) Do() (err error) {
-	//TODO
+	//React to ping requests so RTMP clients that rely on them for
+	//keep-alive don't eventually reset the connection.
+	if ucm.EventType == PingRequest && len(ucm.EventData) >= 4 {
+		reply := &UserControlMessage{
+			MessageBase: ucm.MessageBase,
+			EventType:   PingResponse,
+			EventData:   append([]byte(nil), ucm.EventData[:4]...),
+		}
+		return reply.Send()
+	}
 	return nil
 }
 
@@ -191,7 +228,7 @@ func NewSetChunkSizeMessage(mb MessageBase, fields ...interface{} /*NewChunkSize
 func (scsm *SetChunkSizeMessage) Send() error {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(scsm.NewChunkSize))
-	return NewChunk(SET_CHUNK_SIZE, 4, scsm.messageTime, FMT0, 11, b).Send(scsm.rtmp)
+	return NewChunk(SET_CHUNK_SIZE, 4, scsm.messageTime, FMT0, csidProtocolControl, b).Send(scsm.rtmp)
 }
 
 func (scsm *SetChunkSizeMessage) Parse() (err error) {
@@ -207,66 +244,79 @@ func (scsm *SetChunkSizeMessage) Do() error {
 
 type AbortMessage struct {
 	MessageBase
-	ChunkStreamID int
+	ChunkStreamID uint32
 }
 
-func NewAbortMessage(mb MessageBase, fields ...interface{} /*ChunkStreamID int*/) (am *AbortMessage) {
+func NewAbortMessage(mb MessageBase, fields ...interface{} /*ChunkStreamID uint32*/) (am *AbortMessage) {
 	am = &AbortMessage{
 		MessageBase: mb,
 	}
-	var ok bool
 	if len(fields) == 1 {
-		if am.ChunkStreamID, ok = fields[0].(int); !ok {
-			am.ChunkStreamID = 0
+		switch v := fields[0].(type) {
+		case uint32:
+			am.ChunkStreamID = v
+		case int:
+			am.ChunkStreamID = uint32(v)
 		}
 	}
 	return am
 }
 
-func (scsm *AbortMessage) Send() error {
-	//TODO
+func (am *AbortMessage) Send() error {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, am.ChunkStreamID)
+	return NewChunk(ABORT_MESSAGE, 4, am.messageTime, FMT0, csidProtocolControl, b).Send(am.rtmp)
+}
+
+func (am *AbortMessage) Parse() (err error) {
+	if len(am.messagePayload) < 4 {
+		return fmt.Errorf("AbortMessage payload too short: %d", len(am.messagePayload))
+	}
+	am.ChunkStreamID = binary.BigEndian.Uint32(am.messagePayload[:4])
 	return nil
 }
 
-func (scsm *AbortMessage) Parse() (err error) {
-	//TODO
-	return nil
-}
-
-func (scsm *AbortMessage) Do() error {
-	//TODO
+func (am *AbortMessage) Do() error {
+	//Drop any partial message on the indicated chunk stream so the next
+	//chunk on that CSID starts a fresh message.
+	delete(am.rtmp.lastChunk, am.ChunkStreamID)
 	return nil
 }
 
 type AcknowledgeMessage struct {
 	MessageBase
-	SequenceNumber int
+	SequenceNumber uint32
 }
 
-func NewAcknowledgeMessage(mb MessageBase, fields ...interface{} /*ChunkStreamID int*/) (am *AcknowledgeMessage) {
+func NewAcknowledgeMessage(mb MessageBase, fields ...interface{} /*SequenceNumber uint32*/) (am *AcknowledgeMessage) {
 	am = &AcknowledgeMessage{
 		MessageBase: mb,
 	}
-	var ok bool
 	if len(fields) == 1 {
-		if am.SequenceNumber, ok = fields[0].(int); !ok {
-			am.SequenceNumber = 0
+		switch v := fields[0].(type) {
+		case uint32:
+			am.SequenceNumber = v
+		case int:
+			am.SequenceNumber = uint32(v)
 		}
 	}
 	return am
 }
 
-func (scsm *AcknowledgeMessage) Send() error {
-	//TODO
+func (am *AcknowledgeMessage) Send() error {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, am.SequenceNumber)
+	return NewChunk(ACKNOWLEDGEMENT, 4, am.messageTime, FMT0, csidProtocolControl, b).Send(am.rtmp)
+}
+
+func (am *AcknowledgeMessage) Parse() (err error) {
+	if len(am.messagePayload) < 4 {
+		return fmt.Errorf("AcknowledgeMessage payload too short: %d", len(am.messagePayload))
+	}
+	am.SequenceNumber = binary.BigEndian.Uint32(am.messagePayload[:4])
 	return nil
 }
 
-func (scsm *AcknowledgeMessage) Parse() (err error) {
-	//TODO
-	return nil
-}
-
-func (scsm *AcknowledgeMessage) Do() error {
-	//TODO
+func (am *AcknowledgeMessage) Do() error {
 	return nil
 }

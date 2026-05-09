@@ -16,6 +16,12 @@ const (
 	FMT3
 )
 
+// RTMP 1.0 §5.3.1.3 — when the timestamp (FMT0) or timestamp delta
+// (FMT1/FMT2) cannot fit in 24 bits, the 3-byte field is set to
+// MAX_TIMESTAMP and a 4-byte extended timestamp follows the chunk
+// message header.
+const MAX_TIMESTAMP uint32 = 0xFFFFFF
+
 type ChunkBasicHeader struct {
 	Fmt  MessageHeaderType //2 bits
 	CsID uint32            //6, 14 or 22 bits
@@ -26,7 +32,6 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 	if err != nil {
 		return nil, err
 	}
-	// fmt.Printf("basic header:%x\n", b)
 
 	cbhp = &ChunkBasicHeader{
 		Fmt: MessageHeaderType((b[0] & 0xc0) >> 6),
@@ -45,21 +50,22 @@ func parseChunkBasicHeader(rtmp *RTMP) (cbhp *ChunkBasicHeader, err error) {
 			return nil, err
 		}
 		cbhp.CsID = uint32(b2[0]) + uint32(b2[1])*256 + 64
-	case 0x2:
-		//XXX
 	default:
+		//csid values 2..63 are encoded directly in the 6-bit field.
+		//csid 2 is reserved for low-level protocol control messages;
+		//treat it like any other direct value so state is preserved.
 		cbhp.CsID = uint32(csid)
 	}
-	// fmt.Printf("basic header struct:%+v\n", *cbhp)
 	return cbhp, nil
 }
 
 type ChunkMessageHeader struct {
-	MessageTimeStamp uint32 //3bytes or 4bytes(extended timestamp)
-	MessageTimeDelta uint32
-	MessageLength    uint32 //3bytes
-	MessageType      MessageType
-	MessageStreamID  uint32 //little-endian 4bytes
+	MessageTimeStamp   uint32 //3bytes or 4bytes(extended timestamp)
+	MessageTimeDelta   uint32
+	MessageLength      uint32 //3bytes
+	MessageType        MessageType
+	MessageStreamID    uint32 //little-endian 4bytes
+	ExtendedTimestamp  bool   //true when an extended timestamp field is present
 }
 
 func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader, firstChunkinMessage bool) (cmhp *ChunkMessageHeader, err error) {
@@ -68,15 +74,19 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader, firstChu
 	}
 
 	cmhp = &ChunkMessageHeader{}
+	//raw 3-byte timestamp (FMT0) or delta (FMT1/FMT2) field; we detect
+	//the 0xFFFFFF sentinel on this field, not on the cumulative value.
+	var rawTS uint32
 	switch basicHeader.Fmt {
 	case FMT0:
 		b11, err := rtmp.readerConn.ReadN(11)
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = uint32(0x00)<<24 | uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
+		rawTS = uint32(b11[0])<<16 | uint32(b11[1])<<8 | uint32(b11[2])
+		cmhp.MessageTimeStamp = rawTS
 		cmhp.MessageTimeDelta = 0
-		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
+		cmhp.MessageLength = uint32(b11[3])<<16 | uint32(b11[4])<<8 | uint32(b11[5])
 		cmhp.MessageType = MessageType(b11[6])
 		cmhp.MessageStreamID = binary.LittleEndian.Uint32(b11[7:])
 	case FMT1:
@@ -84,10 +94,9 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader, firstChu
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
-		cmhp.MessageTimeDelta = uint32(0x00)<<24 | uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
-		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
-		cmhp.MessageLength = uint32(0x00)<<24 | uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
+		rawTS = uint32(b7[0])<<16 | uint32(b7[1])<<8 | uint32(b7[2])
+		cmhp.MessageTimeDelta = rawTS
+		cmhp.MessageLength = uint32(b7[3])<<16 | uint32(b7[4])<<8 | uint32(b7[5])
 		cmhp.MessageType = MessageType(b7[6])
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT2:
@@ -95,37 +104,62 @@ func parseChunkMessageHeader(rtmp *RTMP, basicHeader *ChunkBasicHeader, firstChu
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
-		cmhp.MessageTimeDelta = uint32(0x00)<<24 | uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
-		cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
+		rawTS = uint32(b3[0])<<16 | uint32(b3[1])<<8 | uint32(b3[2])
+		cmhp.MessageTimeDelta = rawTS
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
 	case FMT3:
+		//FMT3 has no fields of its own. Inherit everything from the
+		//previous chunk on this CSID. Track whether it carries an
+		//extended timestamp (Adobe behaviour: same as the preceding
+		//chunk) so we read the right number of bytes below.
 		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp
 		cmhp.MessageTimeDelta = rtmp.lastChunk[basicHeader.CsID].MessageTimeDelta
 		cmhp.MessageLength = rtmp.lastChunk[basicHeader.CsID].MessageLength
 		cmhp.MessageType = rtmp.lastChunk[basicHeader.CsID].MessageType
 		cmhp.MessageStreamID = rtmp.lastChunk[basicHeader.CsID].MessageStreamID
+		if rtmp.lastChunk[basicHeader.CsID].ExtendedTimestamp {
+			rawTS = MAX_TIMESTAMP
+		}
 		//NOTE: 2 cases with FMT3
 		//1. A single message is split into chunks, all chunks of a message except the first one SHOULD use this type.
 		//2. A stream consisting of messages of exactly the same size, stream ID and spacing in time SHOULD use this type for all chunks after a chunk of Type 2.
-		if firstChunkinMessage {
-			cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
-		} else {
-		}
 	default:
 		return nil, errors.Errorf("invalid fmt_b:%d", basicHeader.Fmt)
 	}
-	if cmhp.MessageTimeStamp == 0xffffff {
+
+	if rawTS == MAX_TIMESTAMP {
 		b4, err := rtmp.readerConn.ReadN(4)
 		if err != nil {
 			return nil, err
 		}
-		cmhp.MessageTimeStamp = binary.BigEndian.Uint32(b4)
+		ext := binary.BigEndian.Uint32(b4)
+		cmhp.ExtendedTimestamp = true
+		switch basicHeader.Fmt {
+		case FMT0:
+			cmhp.MessageTimeStamp = ext
+		case FMT1, FMT2:
+			cmhp.MessageTimeDelta = ext
+		case FMT3:
+			//new-message FMT3 inherits prior absolute TS; replay of
+			//PreviousTS + delta applies below once we know it's the
+			//first chunk of the message.
+		}
 	}
-	fmt.Printf("[message] chunk fmt:%d, csid:%d, firstChuninMessage:%t, messageType:%d, timeStampDelta:%d, timeStamp:%d\n", basicHeader.Fmt, basicHeader.CsID, firstChunkinMessage, cmhp.MessageType, cmhp.MessageTimeDelta, cmhp.MessageTimeStamp)
-	// fmt.Printf("message header struct:%+v\n", *cmhp)
+
+	//Compute the cumulative timestamp now that the delta is finalised.
+	switch basicHeader.Fmt {
+	case FMT1, FMT2:
+		cmhp.MessageTimeStamp = rtmp.lastChunk[basicHeader.CsID].MessageTimeStamp + cmhp.MessageTimeDelta
+	case FMT3:
+		if firstChunkinMessage {
+			cmhp.MessageTimeStamp += cmhp.MessageTimeDelta
+		}
+	}
+
+	fmt.Printf("[message] chunk fmt:%d, csid:%d, firstChuninMessage:%t, messageType:%d, timeStampDelta:%d, timeStamp:%d, ext:%t\n",
+		basicHeader.Fmt, basicHeader.CsID, firstChunkinMessage, cmhp.MessageType, cmhp.MessageTimeDelta, cmhp.MessageTimeStamp, cmhp.ExtendedTimestamp)
 	return cmhp, nil
 }
 
@@ -178,10 +212,11 @@ func NewChunk(messageType MessageType, messageLength uint32, messageTime uint32,
 			CsID: csid,
 		},
 		ChunkMessageHeader: ChunkMessageHeader{
-			MessageTimeStamp: messageTime,
-			MessageLength:    messageLength,
-			MessageType:      messageType,
-			MessageStreamID:  0,
+			MessageTimeStamp:  messageTime,
+			MessageLength:     messageLength,
+			MessageType:       messageType,
+			MessageStreamID:   0,
+			ExtendedTimestamp: messageTime >= MAX_TIMESTAMP,
 		},
 		Payload: payload,
 	}
@@ -199,24 +234,54 @@ func (chunk *Chunk) Send(rtmp *RTMP) (err error) {
 	} else {
 		b = append(b, uint8(chunk.Fmt<<6)|uint8(0x01))
 		b = append(b, uint8(0), uint8(0))
-		binary.BigEndian.PutUint16(b[len(b)-2:], uint16(chunk.CsID))
+		binary.BigEndian.PutUint16(b[len(b)-2:], uint16(chunk.CsID-64))
 	}
+
+	//For FMT0 we carry an absolute timestamp; for FMT1/FMT2 a delta.
+	//When either exceeds 24 bits we emit the MAX_TIMESTAMP sentinel in
+	//the inline 3-byte field and append a 4-byte extended timestamp
+	//AFTER the chunk message header (RTMP 1.0 §5.3.1.3).
+	tsField := chunk.MessageTimeStamp
+	if chunk.Fmt == FMT1 || chunk.Fmt == FMT2 {
+		tsField = chunk.MessageTimeDelta
+	}
+	useExt := tsField >= MAX_TIMESTAMP
+	inlineTS := tsField
+	if useExt {
+		inlineTS = MAX_TIMESTAMP
+	}
+
 	switch chunk.Fmt {
 	case FMT0:
-		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
+		b = append(b, uint8(inlineTS>>16), uint8(inlineTS>>8), uint8(inlineTS))
 		b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
 		b = append(b, uint8(chunk.MessageType))
-		b = append(b, 0x0, 0x0, 0x0, 0x0)
+		//MessageStreamID is little-endian per spec.
+		msid := make([]byte, 4)
+		binary.LittleEndian.PutUint32(msid, chunk.MessageStreamID)
+		b = append(b, msid...)
 	case FMT1:
-		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
+		b = append(b, uint8(inlineTS>>16), uint8(inlineTS>>8), uint8(inlineTS))
 		b = append(b, uint8(chunk.MessageLength>>16), uint8(chunk.MessageLength>>8), uint8(chunk.MessageLength))
 		b = append(b, uint8(chunk.MessageType))
 	case FMT2:
-		b = append(b, uint8(chunk.MessageTimeStamp>>16), uint8(chunk.MessageTimeStamp>>8), uint8(chunk.MessageTimeStamp))
+		b = append(b, uint8(inlineTS>>16), uint8(inlineTS>>8), uint8(inlineTS))
 	case FMT3:
-		//XXX
+		//FMT3 has no inline message header fields. Presence of the
+		//extended timestamp field is inherited from the prior chunk.
 	default:
 		return errors.Errorf("invalid fmt_c:%d", chunk.Fmt)
 	}
+
+	if useExt || (chunk.Fmt == FMT3 && chunk.ExtendedTimestamp) {
+		extTS := chunk.MessageTimeStamp
+		if chunk.Fmt == FMT1 || chunk.Fmt == FMT2 {
+			extTS = chunk.MessageTimeDelta
+		}
+		ext := make([]byte, 4)
+		binary.BigEndian.PutUint32(ext, extTS)
+		b = append(b, ext...)
+	}
+
 	return rtmp.writerConn.WriteFull(append(b, chunk.Payload...))
 }

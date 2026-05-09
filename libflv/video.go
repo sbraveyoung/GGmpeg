@@ -2,8 +2,6 @@ package libflv
 
 import (
 	"errors"
-	"fmt"
-	"time"
 )
 
 const ( //frame_type
@@ -69,13 +67,14 @@ func ParseVideoTag(tb TagBase, b []byte) (video *VideoTag, err error) {
 func (vt *VideoTag) Marshal() (b []byte) {
 	b = append(b, (vt.FrameType<<4)|(vt.CodecID&0x0f))
 	switch vt.CodecID {
-	case FLV_VIDEO_AVC:
+	case FLV_VIDEO_AVC, FLV_VIDEO_HEVC, FLV_VIDEO_AV1:
+		//Same packet header layout for AVC / HEVC / AV1 in the FLV
+		//enhanced-RTMP profile: 1 byte PacketType + 3 bytes CTS.
 		b = append(b, vt.AVCPacketType)
 		b = append(b, uint8((vt.Cts>>16)&0xff), uint8((vt.Cts>>8)&0xff), uint8(vt.Cts&0xff))
 	default:
-		fmt.Println("vt.CodecID:", vt.CodecID)
-		time.Sleep(time.Second)
-		panic("video marshal panic")
+		//Unknown codec — emit raw VideoData and let the consumer
+		//deal with it rather than crashing the publisher's session.
 	}
 	b = append(b, vt.VideoData...)
 	return b

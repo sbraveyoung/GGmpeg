@@ -81,7 +81,10 @@ func (at *AudioTag) Marshal() (b []byte) {
 	b = make([]byte, 0, 1)
 
 	b = append(b, (at.SoundFormat<<4)|((at.SoundRate&0x03)<<2)|((at.SoundSize&0x01)<<1)|(at.SoundType&0x01))
-	if at.SoundFormat == FLV_AUDIO_AAC {
+	if at.SoundFormat == FLV_AUDIO_AAC || at.SoundFormat == FLV_AUDIO_OPUS {
+		//Both AAC and Opus prepend a 1-byte packet-type field
+		//(0=sequence header / 1=raw frame). Matches what
+		//ParseAudioTag pulls back out.
 		b = append(b, at.AACPacketType)
 	}
 	b = append(b, at.SoundData...)

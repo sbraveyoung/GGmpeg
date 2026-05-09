@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/SmartBrave/Athena/broadcast"
 	"github.com/SmartBrave/Athena/easyerrors"
 	"github.com/SmartBrave/Athena/easyio"
-	"github.com/SmartBrave/GGmpeg/libamf"
-	"github.com/SmartBrave/GGmpeg/libhls"
+	"github.com/sbraveyoung/GGmpeg/libamf"
+	"github.com/sbraveyoung/GGmpeg/libdash"
+	"github.com/sbraveyoung/GGmpeg/libhls"
 	"github.com/fatih/structs"
 	"github.com/goinggo/mapstructure"
 	"github.com/pkg/errors"
@@ -69,6 +71,13 @@ type CommandMessage struct {
 	Start          float64 //play
 	Duration       float64 //play
 	Reset          bool    //play
+
+	// Pause / Seek fields.
+	PauseFlag    bool    //pause
+	MilliSeconds float64 //pause, seek
+
+	// Reader flag toggles for receiveAudio / receiveVideo.
+	BoolFlag bool
 }
 
 func NewCommandMessage(mb MessageBase, fields ...interface{} /*commandName string, transcationID int, others*/) (cm *CommandMessage) {
@@ -83,13 +92,14 @@ func NewCommandMessage(mb MessageBase, fields ...interface{} /*commandName strin
 		if cm.TranscationID, ok = fields[1].(int); !ok {
 			cm.TranscationID = 0
 		}
-		//TODO: others
 	}
 	return cm
 }
 
+// Send is only used when this server originates a command — which, given
+// we don't act as an RTMP client, never happens. Responses flow through
+// CommandMessageResponse instead.
 func (cm *CommandMessage) Send() (err error) {
-	//TODO
 	return nil
 }
 
@@ -116,18 +126,42 @@ func (cm *CommandMessage) Parse() (err error) {
 		if err != nil {
 			return errors.Wrap(err, "mapstructure.Decode")
 		}
-	case RELEASE_STREAM, FCPUBLISH: //ignore
-		_ = array[3]
-		cm.PublishingName = array[3].(string)
-	case FCUNPUBLISH:
-	case DELETE_STREAM:
+	case RELEASE_STREAM, FCPUBLISH, FCUNPUBLISH:
+		if len(array) >= 4 {
+			cm.PublishingName, _ = array[3].(string)
+		}
+	case DELETE_STREAM, CLOSE_STREAM:
+		if len(array) >= 4 {
+			if f, ok := array[3].(float64); ok {
+				cm.MessageBase.messageStreamID = uint32(f)
+			}
+		}
 	case CREATE_STREAM: //do nothing
 	case PUBLISH:
-		_ = array[4]
-		cm.PublishingName = array[3].(string)
-		cm.PublishingType = array[4].(string)
+		if len(array) < 5 {
+			return errors.New("invalid publish command")
+		}
+		cm.PublishingName, _ = array[3].(string)
+		cm.PublishingType, _ = array[4].(string)
 	case PLAY:
-		cm.PublishingName = array[3].(string)
+		if len(array) < 4 {
+			return errors.New("invalid play command")
+		}
+		cm.PublishingName, _ = array[3].(string)
+	case PAUSE:
+		//pause(cmd, txn, null, pauseFlag, milliSeconds)
+		if len(array) >= 5 {
+			cm.PauseFlag, _ = array[3].(bool)
+			cm.MilliSeconds, _ = array[4].(float64)
+		}
+	case SEEK:
+		if len(array) >= 4 {
+			cm.MilliSeconds, _ = array[3].(float64)
+		}
+	case RECEIVE_AUDIO, RECEIVE_VIDEO:
+		if len(array) >= 4 {
+			cm.BoolFlag, _ = array[3].(bool)
+		}
 	}
 	return nil
 }
@@ -138,13 +172,13 @@ func (cm *CommandMessage) Do() (err error) {
 	switch cm.CommandName {
 	case CONNECT:
 		if _, ok := cm.rtmp.server.apps[cm.CommandObject.App]; !ok {
-			//TODO
+			return errors.Errorf("unknown app: %s", cm.CommandObject.App)
 		}
 		cm.rtmp.app = cm.CommandObject.App
 		err1 = NewWindowAcknowledgeSizeMessage(cm.MessageBase, uint32(2500000)).Send()
-		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), 0x02).Send()
+		cm.rtmp.ownWindowAckSize = 2500000
+		err2 = NewSetPeerBandWidthMessage(cm.MessageBase, uint32(2500000), DYNAMIC).Send()
 		//BUG: If do not set ownChunkSize or set ownChunkSize to other value, player maybe panic. But I don't know the reason.
-		// cm.rtmp.ownMaxChunkSize = 1048576
 		cm.rtmp.ownMaxChunkSize = 4096
 		err3 = NewSetChunkSizeMessage(cm.MessageBase, uint32(cm.rtmp.ownMaxChunkSize)).Send()
 		err4 = NewUserControlMessage(cm.MessageBase, StreamBegin).Send()
@@ -154,16 +188,41 @@ func (cm *CommandMessage) Do() (err error) {
 			CommandRespName: _RESULT,
 			TranscationID:   cm.TranscationID,
 			CommandObject: ConnectRespCommandObject{
-				FmsVer: "FMS/3,0,1,123",
-				// Capabilities:31,
-				// Level : "status",
-				// Code : "NetConnection.Connect.Success",
-				// Description : "Connection succeeded",
-				// ObjectEncoding : 0,
+				FmsVer:         "FMS/3,0,1,123",
+				Capabilities:   31,
+				Level:          "status",
+				Code:           "NetConnection.Connect.Success",
+				Description:    "Connection succeeded",
+				ObjectEncoding: cm.CommandObject.ObjectEncoding,
 			},
 		}).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
-	case RELEASE_STREAM, FCPUBLISH: //ignore
+
+	case RELEASE_STREAM, FCPUBLISH:
+		//Both commands are client-side hints emitted by FMLE/OBS before
+		//publish. Reply with a minimal _result so the publisher's state
+		//machine moves forward instead of retrying.
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: _RESULT,
+			TranscationID:   cm.TranscationID,
+			NullValue:       true,
+		}).Send()
+
+	case FCUNPUBLISH:
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Unpublish.Success",
+				Description: "Stop publishing",
+			},
+		}).Send()
+
 	case CALL:
 	case CLOSE:
 	case CREATE_STREAM:
@@ -174,19 +233,30 @@ func (cm *CommandMessage) Do() (err error) {
 			TranscationID:   cm.TranscationID,
 			StreamID:        cm.messageStreamID,
 		}).Send()
+
 	case PUBLISH:
-		var app *App
-		var ok bool
-		if app, ok = cm.rtmp.server.apps[cm.rtmp.app]; !ok {
-			//TODO: return error
-		} else {
-			if cm.rtmp.room = app.Load(cm.PublishingName); cm.rtmp.room == nil {
-				cm.rtmp.room = NewRoom(cm.rtmp, cm.PublishingName)
-				app.Store(cm.PublishingName, cm.rtmp.room)
-			} else {
-				//XXX: repeat error?
-			}
+		app, ok := cm.rtmp.server.apps[cm.rtmp.app]
+		if !ok {
+			return errors.Errorf("app not found: %s", cm.rtmp.app)
 		}
+		if existing := app.Load(cm.PublishingName); existing != nil {
+			//Refuse a second publish to the same stream — replacing the
+			//publisher mid-stream would desync every viewer.
+			return (&CommandMessageResponse{
+				MessageBase:     cm.MessageBase,
+				CommandName:     cm.CommandName,
+				CommandRespName: ON_STATUS,
+				TranscationID:   cm.TranscationID,
+				CommandObject: ConnectRespCommandObject{
+					Level:       "error",
+					Code:        "NetStream.Publish.BadName",
+					Description: "Stream already publishing",
+				},
+			}).Send()
+		}
+		cm.rtmp.room = NewRoom(cm.rtmp, cm.PublishingName)
+		cm.rtmp.role = rolePublisher
+		app.Store(cm.PublishingName, cm.rtmp.room)
 
 		err = (&CommandMessageResponse{
 			MessageBase:     cm.MessageBase,
@@ -201,21 +271,37 @@ func (cm *CommandMessage) Do() (err error) {
 		}).Send()
 
 		if app.hlsMode == libhls.IMMEDIATELY {
-			go libhls.NewHls().Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
+			hls := libhls.NewHls().WithStreamID(cm.PublishingName).WithDir(app.hlsDir)
+			app.hls.Store(cm.PublishingName, hls)
+			go hls.Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
 		}
+		if app.dashEnabled {
+			dash := libdash.NewDASH().WithStreamID(cm.PublishingName).WithDir(app.dashDir)
+			app.StoreDASH(cm.PublishingName, dash)
+			go dash.Start(broadcast.NewBroadcastReader(cm.rtmp.room.GOP))
+		}
+
 	case PLAY:
-		var app *App
-		var ok bool
-		if app, ok = cm.rtmp.server.apps[cm.rtmp.app]; !ok {
-			//TODO: return error
-		} else {
-			//NOTE: the room must be created by publisher
-			if cm.rtmp.room = app.Load(cm.PublishingName); cm.rtmp.room == nil {
-				//TODO: return "room does not exist"
-			} else {
-				cm.rtmp.room.RTMPJoin(cm.rtmp)
-			}
+		app, ok := cm.rtmp.server.apps[cm.rtmp.app]
+		if !ok {
+			return errors.Errorf("app not found: %s", cm.rtmp.app)
 		}
+		cm.rtmp.room = app.Load(cm.PublishingName)
+		if cm.rtmp.room == nil {
+			return (&CommandMessageResponse{
+				MessageBase:     cm.MessageBase,
+				CommandName:     cm.CommandName,
+				CommandRespName: ON_STATUS,
+				TranscationID:   cm.TranscationID,
+				CommandObject: ConnectRespCommandObject{
+					Level:       "error",
+					Code:        "NetStream.Play.StreamNotFound",
+					Description: "Stream not found",
+				},
+			}).Send()
+		}
+		cm.rtmp.role = rolePlayer
+		cm.rtmp.room.RTMPJoin(cm.rtmp)
 
 		err1 = (&CommandMessageResponse{
 			MessageBase:     cm.MessageBase,
@@ -262,8 +348,74 @@ func (cm *CommandMessage) Do() (err error) {
 			},
 		}).Send()
 		err = easyerrors.HandleMultiError(easyerrors.Simple(), err1, err2, err3, err4, err5)
+
+	case PAUSE:
+		code := "NetStream.Unpause.Notify"
+		if cm.PauseFlag {
+			code = "NetStream.Pause.Notify"
+		}
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        code,
+				Description: "Pause/Unpause notification",
+			},
+		}).Send()
+
+	case SEEK:
+		//We don't support true seeks on a live broadcast. Acknowledge so
+		//the client doesn't hang waiting for a response.
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Seek.Notify",
+				Description: "Seeking",
+			},
+		}).Send()
+
+	case RECEIVE_AUDIO, RECEIVE_VIDEO:
+		//No-op ack; we don't implement per-track toggling for live GOP
+		//replay.
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: _RESULT,
+			TranscationID:   cm.TranscationID,
+			NullValue:       true,
+		}).Send()
+
+	case DELETE_STREAM, CLOSE_STREAM:
+		//Stream close emitted by OBS when the user stops streaming.
+		//We rely on cleanup() in HandlerServer for the actual teardown;
+		//here we just reply with a status update so the client can
+		//proceed to disconnect.
+		err = (&CommandMessageResponse{
+			MessageBase:     cm.MessageBase,
+			CommandName:     cm.CommandName,
+			CommandRespName: ON_STATUS,
+			TranscationID:   cm.TranscationID,
+			CommandObject: ConnectRespCommandObject{
+				Level:       "status",
+				Code:        "NetStream.Unpublish.Success",
+				Description: "Stream closed",
+			},
+		}).Send()
+
 	case _RESULT:
+		//Outbound-client path: bump the response counter so the
+		//connect/createStream sender can move on. No-op for the more
+		//common server-side case.
+		atomic.AddUint32(&cm.rtmp.resultCount, 1)
 	case _ERROR:
+		atomic.AddUint32(&cm.rtmp.resultCount, 1)
 	default:
 	}
 
@@ -286,6 +438,10 @@ type CommandMessageResponse struct {
 	TranscationID   int
 	CommandObject   ConnectRespCommandObject
 	StreamID        uint32
+	// When NullValue is true, encode a null property object instead of
+	// the command-object struct — used for simple _result replies to
+	// releaseStream / FCPublish.
+	NullValue bool
 }
 
 func (cmr *CommandMessageResponse) Send() (err error) {
@@ -296,16 +452,19 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 	var err1, err2, err3, err4 error
 	err1 = amf.Encode(writer, cmr.CommandRespName)
 	err2 = amf.Encode(writer, cmr.TranscationID)
-	switch cmr.CommandName {
-	case CONNECT:
+	switch {
+	case cmr.NullValue:
+		err3 = amf.Encode(writer, nil)
+		err4 = amf.Encode(writer, nil)
+	case cmr.CommandName == CONNECT:
 		err3 = amf.Encode(writer, structs.Map(cmr.CommandObject))
-	case CREATE_STREAM:
+	case cmr.CommandName == CREATE_STREAM:
 		err3 = amf.Encode(writer, nil)
 		err4 = amf.Encode(writer, cmr.StreamID)
-	case PUBLISH:
-		err3 = amf.Encode(writer, nil)
-		err4 = amf.Encode(writer, structs.Map(cmr.CommandObject))
-	case PLAY:
+	case cmr.CommandName == PUBLISH, cmr.CommandName == PLAY,
+		cmr.CommandName == PAUSE, cmr.CommandName == SEEK,
+		cmr.CommandName == DELETE_STREAM, cmr.CommandName == CLOSE_STREAM,
+		cmr.CommandName == FCUNPUBLISH:
 		err3 = amf.Encode(writer, nil)
 		err4 = amf.Encode(writer, structs.Map(cmr.CommandObject))
 	}
@@ -320,19 +479,23 @@ func (cmr *CommandMessageResponse) Send() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := 0; i >= 0; i++ {
-		fmt := FMT0
-		if i != 0 {
-			fmt = FMT3
+	chunkSize := cmr.rtmp.ownMaxChunkSize
+	for i := 0; ; i++ {
+		lIndex := i * chunkSize
+		if lIndex >= len(b) {
+			break
 		}
-
-		lIndex := i * int(cmr.rtmp.ownMaxChunkSize)
-		rIndex := (i + 1) * int(cmr.rtmp.ownMaxChunkSize)
+		rIndex := lIndex + chunkSize
 		if rIndex > len(b) {
 			rIndex = len(b)
-			i = -2
 		}
-		NewChunk(COMMAND_MESSAGE_AMF0, uint32(len(b)), cmr.messageTime, fmt, 10, b[lIndex:rIndex]).Send(cmr.rtmp)
+		fmtType := FMT0
+		if i != 0 {
+			fmtType = FMT3
+		}
+		if sendErr := NewChunk(COMMAND_MESSAGE_AMF0, uint32(len(b)), cmr.messageTime, fmtType, csidCommand, b[lIndex:rIndex]).Send(cmr.rtmp); sendErr != nil {
+			return sendErr
+		}
 	}
 	return nil
 }
